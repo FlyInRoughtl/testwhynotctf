@@ -1,0 +1,37 @@
+# Example config for Gargoyle (CTF-Vault)
+system:
+  ram_limit_mb: 2048
+  cpu_limit: 2
+  locale: "ru"
+  edition: "public"
+
+storage:
+  persistent: true
+  shared: false
+  recovery_codes: "recovery_codes.txt"
+
+network:
+  proxy: ""
+  dns_profile: "system" # system|xbox|custom
+  dns_custom: ""
+  doh_url: ""
+  doh_listen: "127.0.0.1:5353"
+  tor: false
+  mac_spoof: true
+  wifi_enabled: true
+  bluetooth_enabled: false
+  ports_open: false
+
+security:
+  identity_key_path: "keys/identity.key"
+  identity_length: 256
+  identity_group: 15
+
+mesh:
+  relay_url: ""
+  onion_depth: 3
+  metadata_level: "standard"
+
+ui:
+  theme: "dark"
+  language: "ru"

@@ -1,0 +1,63 @@
+package mesh
+
+import (
+    "encoding/binary"
+    "encoding/json"
+    "errors"
+    "io"
+)
+
+type Header struct {
+    Version       int                   `json:"version"`
+    Op            string                `json:"op"`
+    Token         string                `json:"token,omitempty"`
+    Name          string                `json:"name,omitempty"`
+    Size          int64                 `json:"size,omitempty"`
+    Encrypted     bool                  `json:"encrypted"`
+    MetadataLevel string                `json:"metadata_level,omitempty"`
+    Target        string                `json:"target,omitempty"`
+    Route         string                `json:"route,omitempty"`
+    Security      *SecurityStreamHeader `json:"security,omitempty"`
+}
+
+type SecurityStreamHeader struct {
+    Salt      string `json:"salt"`
+    NonceBase string `json:"nonce_base"`
+    ChunkSize int    `json:"chunk_size"`
+    Algo      string `json:"algo"`
+    Depth     int    `json:"depth"`
+}
+
+func writeHeader(w io.Writer, hdr Header) error {
+    data, err := json.Marshal(hdr)
+    if err != nil {
+        return err
+    }
+    if len(data) > int(^uint32(0)) {
+        return errors.New("header too large")
+    }
+    var lenBuf [4]byte
+    binary.BigEndian.PutUint32(lenBuf[:], uint32(len(data)))
+    if _, err := w.Write(lenBuf[:]); err != nil {
+        return err
+    }
+    _, err = w.Write(data)
+    return err
+}
+
+func readHeader(r io.Reader) (Header, error) {
+    var lenBuf [4]byte
+    if _, err := io.ReadFull(r, lenBuf[:]); err != nil {
+        return Header{}, err
+    }
+    n := binary.BigEndian.Uint32(lenBuf[:])
+    data := make([]byte, n)
+    if _, err := io.ReadFull(r, data); err != nil {
+        return Header{}, err
+    }
+    var hdr Header
+    if err := json.Unmarshal(data, &hdr); err != nil {
+        return Header{}, err
+    }
+    return hdr, nil
+}
