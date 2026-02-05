@@ -1,0 +1,8 @@
+# Gargoyle Script sample
+print "Gargoyle Script: hello"
+print "Starting relay on :18080"
+relay.start :18080
+sleep 500
+print "Relay running"
+# Example mesh send: mesh.send <src> <dst> <target> <psk> [depth]
+# mesh.send ./file.txt file.txt 127.0.0.1:19999 secret 3

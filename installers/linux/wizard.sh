@@ -57,7 +57,7 @@ prompt_input() {
 }
 
 write_config() {
-  local path="$1" edition="$2" dns_profile="$3" dns_custom="$4" wifi="$5" bt="$6" ports="$7"
+  local path="$1" edition="$2" dns_profile="$3" dns_custom="$4" wifi="$5" bt="$6" ports="$7" usb_enabled="$8" usb_read_only="$9" ram_only="${10}" net_mode="${11}" vpn_type="${12}" vpn_profile="${13}" gateway_ip="${14}" tor_install="${15}" tor_strict="${16}" proxy_engine="${17}" proxy_config="${18}"
   cat > "$path" <<EOF
 # Gargoyle config
 system:
@@ -70,12 +70,25 @@ storage:
   persistent: true
   shared: true
   recovery_codes: "recovery_codes.txt"
+  usb_enabled: $usb_enabled
+  usb_read_only: $usb_read_only
+  ram_only: $ram_only
 
 network:
   proxy: ""
+  mode: "$net_mode"
+  vpn_type: "$vpn_type"
+  vpn_profile: "$vpn_profile"
+  gateway_ip: "$gateway_ip"
+  proxy_engine: "$proxy_engine"
+  proxy_config: "$proxy_config"
   dns_profile: "$dns_profile"
   dns_custom: "$dns_custom"
-  tor: false
+  doh_url: ""
+  doh_listen: "127.0.0.1:5353"
+  tor: $tor_install
+  tor_always_on: $tor_install
+  tor_strict: $tor_strict
   mac_spoof: true
   wifi_enabled: $wifi
   bluetooth_enabled: $bt
@@ -94,6 +107,23 @@ mesh:
 ui:
   theme: "dark"
   language: "ru"
+
+emulate:
+  privacy_mode: true
+  temp_dir: "ram"
+  downloads_dir: "downloads"
+
+tunnel:
+  type: "frp"
+  server: ""
+  token: ""
+
+mail:
+  mode: "local"
+  sink: true
+  local_server: true
+  sink_listen: "127.0.0.1:1025"
+  sink_ui: "127.0.0.1:8025"
 EOF
 }
 
@@ -113,6 +143,20 @@ gen_identity_key() {
   mkdir -p "$(dirname "$path")"
   printf "%s\n" "$formatted" > "$path"
   chmod 600 "$path"
+}
+
+write_sample_script() {
+  local path="$1"
+  cat > "$path" <<'EOF'
+# Gargoyle Script sample
+print "Gargoyle Script: hello"
+print "Starting relay on :18080"
+relay.start :18080
+sleep 500
+print "Relay running"
+# Example mesh send: mesh.send <src> <dst> <target> <psk> [depth]
+# mesh.send ./file.txt file.txt 127.0.0.1:19999 secret 3
+EOF
 }
 
 pick_usb() {
@@ -147,7 +191,7 @@ require_cmd() {
 }
 
 apply_usb_layout() {
-  local dev="$1" system_size="$2" persist_size="$3"
+  local dev="$1" system_size="$2" persist_size="$3" free_mb="$4" cluster_kb="$5"
   require_cmd sgdisk
   require_cmd mkfs.ext4
   require_cmd mkfs.exfat
@@ -157,11 +201,23 @@ apply_usb_layout() {
   read -rp "Type FORMAT to continue: " confirm
   [ "$confirm" = "FORMAT" ] || { echo "Cancelled"; exit 1; }
 
+  local shared_end="0"
+  if [[ "$free_mb" =~ ^[0-9]+$ ]] && [ "$free_mb" -gt 0 ]; then
+    shared_end="-$free_mb"M
+  fi
+  if ! [[ "$cluster_kb" =~ ^[0-9]+$ ]]; then
+    cluster_kb=256
+  fi
+  if [ "$cluster_kb" -lt 4 ]; then
+    cluster_kb=256
+  fi
+  local cluster_sectors=$((cluster_kb * 2))
+
   sudo sgdisk --zap-all "$dev"
   sudo sgdisk -n 1:0:+512M -t 1:ef00 -c 1:GARGOYLE_EFI "$dev"
   sudo sgdisk -n 2:0:+${system_size}M -t 2:8300 -c 2:GARGOYLE_SYS "$dev"
   sudo sgdisk -n 3:0:+${persist_size}M -t 3:8300 -c 3:GARGOYLE_PERSIST "$dev"
-  sudo sgdisk -n 4:0:0 -t 4:0700 -c 4:GARGOYLE_SHARED "$dev"
+  sudo sgdisk -n 4:0:${shared_end} -t 4:0700 -c 4:GARGOYLE_SHARED "$dev"
 
   sudo mkfs.vfat -F32 "${dev}1"
   sudo mkfs.ext4 -L GARGOYLE_SYS "${dev}2"
@@ -170,12 +226,42 @@ apply_usb_layout() {
   sudo cryptsetup open "${dev}3" gargoyle_persist
   sudo mkfs.ext4 -L GARGOYLE_PERSIST /dev/mapper/gargoyle_persist
 
-  # exFAT cluster size 512KB => 1024 sectors of 512 bytes
-  sudo mkfs.exfat -s 1024 -n GARGOYLE_SHARED "${dev}4" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}4"
+  # exFAT cluster size: cluster_kb (default 256KB)
+  sudo mkfs.exfat -s "$cluster_sectors" -n GARGOYLE_SHARED "${dev}4" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}4"
 
   sudo mkdir -p /mnt/gargoyle_persist
   sudo mount /dev/mapper/gargoyle_persist /mnt/gargoyle_persist
   sudo mkdir -p /mnt/gargoyle_persist/{data,downloads,logs,keys,shared}
+}
+
+apply_usb_shared_layout() {
+  local dev="$1" free_mb="$2" cluster_kb="$3"
+  require_cmd sgdisk
+  require_cmd mkfs.exfat
+
+  echo "WARNING: This will erase $dev"
+  read -rp "Type FORMAT to continue: " confirm
+  [ "$confirm" = "FORMAT" ] || { echo "Cancelled"; exit 1; }
+
+  local end="0"
+  if [[ "$free_mb" =~ ^[0-9]+$ ]] && [ "$free_mb" -gt 0 ]; then
+    end="-$free_mb"M
+  fi
+  if ! [[ "$cluster_kb" =~ ^[0-9]+$ ]]; then
+    cluster_kb=256
+  fi
+  if [ "$cluster_kb" -lt 4 ]; then
+    cluster_kb=256
+  fi
+  local cluster_sectors=$((cluster_kb * 2))
+
+  sudo sgdisk --zap-all "$dev"
+  sudo sgdisk -n 1:0:${end} -t 1:0700 -c 1:GARGOYLE_SHARED "$dev"
+  sudo mkfs.exfat -s "$cluster_sectors" -n GARGOYLE_SHARED "${dev}1" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}1"
+
+  sudo mkdir -p /mnt/gargoyle_shared
+  sudo mount "${dev}1" /mnt/gargoyle_shared
+  sudo mkdir -p /mnt/gargoyle_shared/gargoyle/{data,downloads,logs,keys,shared,scripts}
 }
 
 main() {
@@ -201,13 +287,64 @@ main() {
   wifi=$(prompt_yesno "Enable Wi-Fi by default?" "yes")
   bt=$(prompt_yesno "Enable Bluetooth by default?" "no")
   ports=$(prompt_yesno "Open ports by default?" "no")
+  local install_scripts
+  install_scripts=$(prompt_yesno "Install Gargoyle Script (DSL) samples?" "yes")
+  local usb_enabled
+  usb_enabled=$(prompt_yesno "Enable USB access inside Gargoyle?" "no")
+  local usb_read_only
+  usb_read_only="no"
+  if [ "$usb_enabled" = "yes" ]; then
+    usb_read_only=$(prompt_yesno "USB read-only mode?" "yes")
+  fi
+  local ram_only
+  ram_only=$(prompt_yesno "RAM-only session (no disk writes)?" "no")
+
+  local net_mode vpn_type vpn_profile gateway_ip tor_install
+  net_mode=$(prompt_menu "Network mode" "direct" "vpn" "gateway" "proxy")
+  vpn_type=""
+  vpn_profile=""
+  gateway_ip=""
+  proxy_engine=""
+  proxy_config=""
+  if [ "$net_mode" = "vpn" ]; then
+    vpn_type=$(prompt_menu "VPN type" "openvpn" "wireguard")
+    while true; do
+      vpn_profile=$(prompt_input "VPN profile path" "")
+      [ -n "$vpn_profile" ] && break
+      echo "VPN profile path is required for vpn mode"
+    done
+  fi
+  if [ "$net_mode" = "gateway" ]; then
+    while true; do
+      gateway_ip=$(prompt_input "Gateway IP (e.g., 192.168.1.1)" "")
+      [ -n "$gateway_ip" ] && break
+      echo "Gateway IP is required for gateway mode"
+    done
+  fi
+  if [ "$net_mode" = "proxy" ]; then
+    proxy_engine=$(prompt_menu "Proxy engine" "sing-box" "xray")
+    while true; do
+      proxy_config=$(prompt_input "Proxy config path" "")
+      [ -n "$proxy_config" ] && break
+      echo "Proxy config path is required for proxy mode"
+    done
+  fi
+  tor_install=$(prompt_yesno "Install Tor (always-on)?" "yes")
+  local tor_strict="no"
+  if [ "$tor_install" = "yes" ]; then
+    tor_strict=$(prompt_yesno "Strict Tor mode (block non-Tor traffic)?" "no")
+  fi
 
   if [ "$target" = "Folder" ]; then
     local folder
     folder=$(prompt_input "Install folder path" "$HOME/gargoyle")
     mkdir -p "$folder"/{data,downloads,logs,keys,shared}
-    write_config "$folder/ctfvault.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports"
+    write_config "$folder/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
     gen_identity_key "$folder/keys/identity.key"
+    if [ "$install_scripts" = "yes" ]; then
+      mkdir -p "$folder/scripts"
+      write_sample_script "$folder/scripts/sample.gsl"
+    fi
     echo "Folder install complete: $folder"
     exit 0
   fi
@@ -219,14 +356,34 @@ main() {
     exit 1
   fi
 
+  local layout free_space
+  layout=$(prompt_menu "USB layout" "Full (EFI+SYSTEM+PERSIST+SHARED)" "Shared-only (single exFAT)")
+  free_space=$(prompt_input "Leave unallocated space at end (MB)" "0")
+  local cluster_kb=256
+
+  if [ "$layout" = "Shared-only (single exFAT)" ]; then
+    apply_usb_shared_layout "$dev" "$free_space" "$cluster_kb"
+    write_config "/mnt/gargoyle_shared/gargoyle/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
+    gen_identity_key "/mnt/gargoyle_shared/gargoyle/keys/identity.key"
+    if [ "$install_scripts" = "yes" ]; then
+      write_sample_script "/mnt/gargoyle_shared/gargoyle/scripts/sample.gsl"
+    fi
+    echo "USB shared-only layout complete. Mounted at /mnt/gargoyle_shared."
+    exit 0
+  fi
+
   local system_size persist_size
   system_size=$(prompt_input "System partition size (MB)" "4096")
   persist_size=$(prompt_input "Persistent partition size (MB)" "8192")
 
-  apply_usb_layout "$dev" "$system_size" "$persist_size"
+  apply_usb_layout "$dev" "$system_size" "$persist_size" "$free_space" "$cluster_kb"
 
-  write_config "/mnt/gargoyle_persist/ctfvault.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports"
+  write_config "/mnt/gargoyle_persist/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
   gen_identity_key "/mnt/gargoyle_persist/keys/identity.key"
+  if [ "$install_scripts" = "yes" ]; then
+    mkdir -p "/mnt/gargoyle_persist/scripts"
+    write_sample_script "/mnt/gargoyle_persist/scripts/sample.gsl"
+  fi
   echo "USB layout complete. Persistent mounted at /mnt/gargoyle_persist."
 }
 

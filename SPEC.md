@@ -220,8 +220,9 @@ EN: Standard primitives only; custom protocol layer with key rotation and multi-
 - Каждая машина имеет identity-ключ; доступ к каналу через обмен ключами.
 - Дополнительный файл с 10 кодами для подтверждения доступа (одноразовые/многоразовые политики настраиваются).
 - Все данные проходят E2E-шифрование, глубина шифрования = onion_depth.
-- Relay-сервер: отдельный процесс `ctfvault relay` (V1.1).
- - Relay-chain: последовательный forward через цепочку relay (V1.1, multi-hop).
+- Relay-сервер: отдельный процесс `gargoyle relay` (V1.1).
+- Relay-chain: последовательный forward через цепочку relay (V1.1, multi-hop).
+ - Onion-chain: hop-by-hop снятие слоев на relay (V1.1b).
 
 EN: Mesh overlay with P2P and relay fallback; connectivity matrix and prioritized fallback order.
 
@@ -229,11 +230,12 @@ EN: Mesh overlay with P2P and relay fallback; connectivity matrix and prioritize
 
 ## 11. Передача файлов (mesh + onion)
 ### 11.1 Команда
-ctfvault mesh send <src> <dst> --security --metadata standard
+gargoyle mesh send <src> <dst> --security --metadata standard
 
 ### 11.2 Поведение --security
 - В V1.1: многослойное шифрование (depth 1..10) поверх прямого канала, relay или relay-chain.
 - Полная E2E-шифрация данных.
+ - В V1.1b: onion-chain снимает по одному слою на каждом relay и передает внутрь цепочки.
 
 ### 11.3 Режим передачи
 - Streaming + resume (чанки с checkpoint).
@@ -283,15 +285,15 @@ EN: Modular tool categories with first-run selection and offline cache.
 
 ## 15. CLI и конфиг
 ### 15.1 CLI команды (минимум)
-- ctfvault start
-- ctfvault stop
-- ctfvault status
-- ctfvault mesh up
-- ctfvault mesh send --security
-- ctfvault wipe --emergency
+- gargoyle start
+- gargoyle stop
+- gargoyle status
+- gargoyle mesh up
+- gargoyle mesh send --security
+- gargoyle wipe --emergency
 
 ### 15.2 Конфиг
-Файл ctfvault.yaml:
+Файл gargoyle.yaml:
 - system: ram_limit, cpu_limit, locale, edition
 - storage: persistent, shared, recovery_codes
 - network: proxy, dns_profile, dns_custom, tor, mac_spoof, wifi_enabled, bluetooth_enabled, ports_open
@@ -352,4 +354,5 @@ EN: No full anonymity; public Wi‑Fi requires relay; custom crypto only as prot
 - V2: web-панель (browser mode) и расширенный GUI.
 
 EN: V1 Live-USB+TUI+mesh; V1.1 onion transfer; V2 web UI.
+
 

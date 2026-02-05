@@ -22,15 +22,17 @@ type StreamHeader struct {
 	ChunkSize int    `json:"chunk_size"`
 	Algo      string `json:"algo"`
 	Depth     int    `json:"depth"`
+	Offset    int    `json:"offset"`
 }
 
-func DeriveKey(psk []byte, salt []byte, layer int) ([]byte, error) {
+func DeriveKey(psk []byte, salt []byte, layer int, offset int) ([]byte, error) {
 	if len(psk) == 0 {
 		return nil, errors.New("psk is empty")
 	}
-	info := []byte("ctfvault-stream")
-	if layer > 0 {
-		info = []byte("ctfvault-stream-layer-" + itoa(layer))
+	info := []byte("gargoyle-stream")
+	idx := layer + offset
+	if idx > 0 {
+		info = []byte("gargoyle-stream-layer-" + itoa(idx))
 	}
 	h := hkdf.New(sha256.New, psk, salt, info)
 	key := make([]byte, chacha20poly1305.KeySize)
@@ -61,18 +63,19 @@ func NewStreamHeader(chunkSize int, depth int) (StreamHeader, []byte, []byte, er
 		ChunkSize: chunkSize,
 		Algo:      "CHACHA20-POLY1305",
 		Depth:     depth,
+		Offset:    0,
 	}
 	return header, salt, nonceBase, nil
 }
 
-func ParseStreamHeader(header StreamHeader) ([]byte, []byte, int, int, error) {
+func ParseStreamHeader(header StreamHeader) ([]byte, []byte, int, int, int, error) {
 	salt, err := base64.RawStdEncoding.DecodeString(header.Salt)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, nil, 0, 0, 0, err
 	}
 	nonceBase, err := base64.RawStdEncoding.DecodeString(header.NonceBase)
 	if err != nil {
-		return nil, nil, 0, 0, err
+		return nil, nil, 0, 0, 0, err
 	}
 	chunkSize := header.ChunkSize
 	if chunkSize <= 0 {
@@ -82,11 +85,15 @@ func ParseStreamHeader(header StreamHeader) ([]byte, []byte, int, int, error) {
 	if depth <= 0 {
 		depth = 1
 	}
-	return salt, nonceBase, chunkSize, depth, nil
+	offset := header.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return salt, nonceBase, chunkSize, depth, offset, nil
 }
 
 func EncryptStream(r io.Reader, w io.Writer, psk []byte, nonceBase []byte, salt []byte, chunkSize int, depth int) error {
-	aeads, err := buildAEADs(psk, salt, depth)
+	aeads, err := buildAEADs(psk, salt, depth, 0)
 	if err != nil {
 		return err
 	}
@@ -115,8 +122,8 @@ func EncryptStream(r io.Reader, w io.Writer, psk []byte, nonceBase []byte, salt 
 	}
 }
 
-func DecryptStream(r io.Reader, w io.Writer, psk []byte, nonceBase []byte, salt []byte, depth int) error {
-	aeads, err := buildAEADs(psk, salt, depth)
+func DecryptStream(r io.Reader, w io.Writer, psk []byte, nonceBase []byte, salt []byte, depth int, offset int) error {
+	aeads, err := buildAEADs(psk, salt, depth, offset)
 	if err != nil {
 		return err
 	}
@@ -154,13 +161,13 @@ func nextNonce(base []byte, counter uint64) []byte {
 	return nonce
 }
 
-func buildAEADs(psk []byte, salt []byte, depth int) ([]cipher.AEAD, error) {
+func buildAEADs(psk []byte, salt []byte, depth int, offset int) ([]cipher.AEAD, error) {
 	if depth <= 0 {
 		depth = 1
 	}
 	aeads := make([]cipher.AEAD, 0, depth)
 	for i := 0; i < depth; i++ {
-		key, err := DeriveKey(psk, salt, i)
+		key, err := DeriveKey(psk, salt, i, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -171,6 +178,34 @@ func buildAEADs(psk []byte, salt []byte, depth int) ([]cipher.AEAD, error) {
 		aeads = append(aeads, aead)
 	}
 	return aeads, nil
+}
+
+func PeelOneLayer(r io.Reader, w io.Writer, psk []byte, nonceBase []byte, salt []byte, offset int) error {
+	aeads, err := buildAEADs(psk, salt, 1, offset)
+	if err != nil {
+		return err
+	}
+	aead := aeads[0]
+
+	counter := uint64(0)
+	for {
+		ciphertext, err := readChunk(r)
+		if err != nil {
+			return err
+		}
+		if len(ciphertext) == 0 {
+			return writeChunk(w, nil)
+		}
+		nonce := nextNonce(nonceBase, counter)
+		counter++
+		inner, err := aead.Open(nil, nonce, ciphertext, nil)
+		if err != nil {
+			return err
+		}
+		if err := writeChunk(w, inner); err != nil {
+			return err
+		}
+	}
 }
 
 func itoa(v int) string {

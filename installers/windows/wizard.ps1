@@ -51,7 +51,20 @@ function Generate-IdentityKey($path, $length = 256, $group = 15) {
     $formatted.ToString() | Set-Content -Path $path -Encoding ascii
 }
 
-function Write-Config($path, $edition, $dnsProfile, $dnsCustom, $wifi, $bt, $ports) {
+function Write-SampleScript($path) {
+    @"
+# Gargoyle Script sample
+print "Gargoyle Script: hello"
+print "Starting relay on :18080"
+relay.start :18080
+sleep 500
+print "Relay running"
+# Example mesh send: mesh.send <src> <dst> <target> <psk> [depth]
+# mesh.send ./file.txt file.txt 127.0.0.1:19999 secret 3
+"@ | Set-Content -Path $path -Encoding ascii
+}
+
+function Write-Config($path, $edition, $dnsProfile, $dnsCustom, $wifi, $bt, $ports, $usbEnabled, $usbReadOnly, $ramOnly, $netMode, $vpnType, $vpnProfile, $gatewayIP, $proxyEngine, $proxyConfig, $torInstall, $torStrict) {
     @"
 # Gargoyle config
 system:
@@ -64,12 +77,25 @@ storage:
   persistent: true
   shared: true
   recovery_codes: "recovery_codes.txt"
+  usb_enabled: $usbEnabled
+  usb_read_only: $usbReadOnly
+  ram_only: $ramOnly
 
 network:
   proxy: ""
+  mode: "$netMode"
+  vpn_type: "$vpnType"
+  vpn_profile: "$vpnProfile"
+  gateway_ip: "$gatewayIP"
+  proxy_engine: "$proxyEngine"
+  proxy_config: "$proxyConfig"
   dns_profile: "$dnsProfile"
   dns_custom: "$dnsCustom"
-  tor: false
+  doh_url: ""
+  doh_listen: "127.0.0.1:5353"
+  tor: $torInstall
+  tor_always_on: $torInstall
+  tor_strict: $torStrict
   mac_spoof: true
   wifi_enabled: $wifi
   bluetooth_enabled: $bt
@@ -88,6 +114,23 @@ mesh:
 ui:
   theme: "dark"
   language: "ru"
+
+emulate:
+  privacy_mode: true
+  temp_dir: "ram"
+  downloads_dir: "downloads"
+
+tunnel:
+  type: "frp"
+  server: ""
+  token: ""
+
+mail:
+  mode: "local"
+  sink: true
+  local_server: true
+  sink_listen: "127.0.0.1:1025"
+  sink_ui: "127.0.0.1:8025"
 "@ | Set-Content -Path $path -Encoding ascii
 }
 
@@ -109,6 +152,40 @@ if ($dnsProfile -eq "xbox") {
 $wifi = Ask-YesNo "Enable Wi-Fi by default?" $true
 $bt = Ask-YesNo "Enable Bluetooth by default?" $false
 $ports = Ask-YesNo "Open ports by default?" $false
+$installScripts = Ask-YesNo "Install Gargoyle Script (DSL) samples?" $true
+$usbEnabled = Ask-YesNo "Enable USB access inside Gargoyle?" $false
+$usbReadOnly = $false
+if ($usbEnabled) {
+    $usbReadOnly = Ask-YesNo "USB read-only mode?" $true
+}
+$ramOnly = Ask-YesNo "RAM-only session (no disk writes)?" $false
+
+$netMode = Ask-Choice "Network mode" @("direct", "vpn", "gateway", "proxy")
+$vpnType = ""
+$vpnProfile = ""
+$gatewayIP = ""
+$proxyEngine = ""
+$proxyConfig = ""
+if ($netMode -eq "vpn") {
+    $vpnType = Ask-Choice "VPN type" @("openvpn", "wireguard")
+    $vpnProfile = Read-Host "VPN profile path"
+    if (-not $vpnProfile) { throw "VPN profile path is required for VPN mode" }
+}
+if ($netMode -eq "gateway") {
+    $gatewayIP = Read-Host "Gateway IP (e.g., 192.168.1.1)"
+    if (-not $gatewayIP) { throw "Gateway IP is required for gateway mode" }
+}
+$netMode = $netMode
+if ($netMode -eq "proxy") {
+    $proxyEngine = Ask-Choice "Proxy engine" @("sing-box", "xray")
+    $proxyConfig = Read-Host "Proxy config path"
+    if (-not $proxyConfig) { throw "Proxy config path is required for proxy mode" }
+}
+$torInstall = Ask-YesNo "Install Tor (always-on)?" $true
+$torStrict = $false
+if ($torInstall) {
+    $torStrict = Ask-YesNo "Strict Tor mode (block non-Tor traffic)?" $false
+}
 
 if ($target -like "Folder*") {
     $folder = Read-Host "Enter install folder path"
@@ -117,8 +194,13 @@ if ($target -like "Folder*") {
     foreach ($dir in @("data","downloads","logs","keys","shared")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $folder $dir) | Out-Null
     }
-    Write-Config (Join-Path $folder "ctfvault.yaml") $edition $dnsProfile $dnsCustom $wifi $bt $ports
+    Write-Config (Join-Path $folder "gargoyle.yaml") $edition $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict
     Generate-IdentityKey (Join-Path $folder "keys\identity.key") 256 15
+    if ($installScripts) {
+        $scriptsDir = Join-Path $folder "scripts"
+        New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
+        Write-SampleScript (Join-Path $scriptsDir "sample.gsl")
+    }
     Write-Host "Folder install complete: $folder" -ForegroundColor Green
     exit 0
 }
@@ -133,13 +215,52 @@ foreach ($d in $disks) {
     Write-Host ("Disk {0}: {1} {2}GB" -f $d.Number, $d.FriendlyName, [math]::Round($d.Size/1GB,2))
 }
 $diskNum = Read-Host "Enter disk number to format as exFAT (THIS ERASES DATA)"
+$leaveFree = Read-Host "Leave unallocated space at end (MB, default 0)"
+if (-not $leaveFree) { $leaveFree = 0 }
+$leaveFreeMB = 0
+if ($leaveFree -match '^[0-9]+$') { $leaveFreeMB = [int64]$leaveFree }
 $confirm = Read-Host "Type FORMAT to confirm"
 if ($confirm -ne "FORMAT") { throw "Cancelled" }
 
 $disk = Get-Disk -Number $diskNum
 $disk | Set-Disk -IsReadOnly $false
 $disk | Clear-Disk -RemoveData -Confirm:$false
-$part = New-Partition -DiskNumber $diskNum -UseMaximumSize -AssignDriveLetter
-Format-Volume -Partition $part -FileSystem exFAT -AllocationUnitSize 524288 -NewFileSystemLabel "GARGOYLE_SHARED" -Confirm:$false
+if ($leaveFreeMB -gt 0) {
+    $size = $disk.Size - ($leaveFreeMB * 1MB)
+    if ($size -le 0) { throw "Leave free space too large" }
+    $part = New-Partition -DiskNumber $diskNum -Size $size -AssignDriveLetter
+} else {
+    $part = New-Partition -DiskNumber $diskNum -UseMaximumSize -AssignDriveLetter
+}
+Format-Volume -Partition $part -FileSystem exFAT -AllocationUnitSize 262144 -NewFileSystemLabel "GARGOYLE_SHARED" -Confirm:$false
+
+$drive = $part.DriveLetter
+if ($drive) {
+    $homeRoot = "$drive`:\gargoyle"
+    New-Item -ItemType Directory -Force -Path $homeRoot | Out-Null
+    foreach ($dir in @("data","downloads","logs","keys","shared","scripts")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
+    }
+    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict
+    Generate-IdentityKey (Join-Path $homeRoot "keys\identity.key") 256 15
+    if ($installScripts) {
+        Write-SampleScript (Join-Path $homeRoot "scripts\sample.gsl")
+    }
+
+    $enableBitLocker = Ask-YesNo "Enable BitLocker on this USB? (requires admin/Pro)" $false
+    if ($enableBitLocker) {
+        $bitlocker = Get-Command manage-bde -ErrorAction SilentlyContinue
+        if ($bitlocker) {
+            Write-Host "Enabling BitLocker on $drive:`\" -ForegroundColor Yellow
+            try {
+                & manage-bde -on "$drive`:" -RecoveryPassword | Out-Host
+            } catch {
+                Write-Host "BitLocker failed: $_" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "manage-bde not found (BitLocker unavailable)" -ForegroundColor Red
+        }
+    }
+}
 
 Write-Host "USB formatted as exFAT shared. Full ext4/LUKS layout requires Linux wizard." -ForegroundColor Yellow

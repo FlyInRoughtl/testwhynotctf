@@ -37,6 +37,40 @@ func (r Runner) Run() error {
 	return cmd.Run()
 }
 
+func (r Runner) Start() (*exec.Cmd, func() error, error) {
+	if r.URL == "" {
+		return nil, nil, errors.New("doh url is required")
+	}
+	listen := r.Listen
+	if listen == "" {
+		listen = "127.0.0.1:5353"
+	}
+
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cloudflared, err := exec.LookPath("cloudflared")
+	if err != nil {
+		return nil, nil, errors.New("cloudflared not found (install to run DoH proxy)")
+	}
+
+	cmd := exec.Command(cloudflared, "proxy-dns", "--address", host, "--port", port, "--upstream", r.URL)
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Start(); err != nil {
+		return nil, nil, err
+	}
+	stop := func() error {
+		if cmd.Process == nil {
+			return nil
+		}
+		return cmd.Process.Kill()
+	}
+	return cmd, stop, nil
+}
+
 func Hint() string {
 	return "Install cloudflared to enable DoH proxy (cloudflared proxy-dns)"
 }

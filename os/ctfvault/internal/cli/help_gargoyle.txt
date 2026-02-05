@@ -1,0 +1,89 @@
+GARGOYLE — методичка (help-gargoyle)
+
+О системе
+- Gargoyle — изолированная среда для CTF/лабораторных задач.
+- Основной фокус: приватность внутри окружения, удобство работы, минимум внешних зависимостей.
+- Абсолютную анонимность не обещаем: это best-effort модель, ориентированная на CTF-риски.
+
+Быстрый старт
+1) Установить через wizard (USB или папка).
+2) Запустить: gargoyle start --tui
+3) Проверить статус: gargoyle status
+4) Помощь по командам: gargoyle help
+5) Полная методичка: gargoyle help-gargoyle
+
+Домашняя директория
+- По умолчанию: ~/.gargoyle
+- Переопределить: GARGOYLE_HOME=/path
+
+Конфиг
+- Файл: gargoyle.yaml (по умолчанию в home)
+- Примеры и структура: gargoyle.yaml.example
+- Базовые секции: system, storage, network, security, mesh, ui, emulate, tunnel, mail.
+
+USB/Память (рекомендованный layout)
+1) EFI/BOOT (FAT32) ~512MB
+2) SYSTEM (ext4 RO) или squashfs
+3) PERSISTENT (LUKS2 + ext4)
+4) SHARED (exFAT)
+Дополнительно можно оставить свободное место.
+
+CLI команды (основное)
+gargoyle start [--tui] [--apply-network]
+gargoyle stop
+gargoyle status
+gargoyle init [--force]
+gargoyle version
+
+Mesh/Relay (обмен файлами)
+gargoyle mesh up|status
+gargoyle mesh send <src> <dst> --to host:port [--security] [--psk/--psk-file]
+gargoyle mesh recv --listen :19999 --out ./downloads
+gargoyle relay --listen :18080
+
+DoH
+gargoyle doh --listen 127.0.0.1:5353 --url https://.../dns-query
+
+EmulateEL (Linux GUI)
+gargoyle emulate run <app> [args...]
+gargoyle emulate stop
+gargoyle emulate status
+
+Resource Hub
+gargoyle hub start --listen 127.0.0.1:8080
+gargoyle hub stop
+gargoyle hub status
+
+Tunnel (FRP)
+gargoyle tunnel expose <service> <port> [token]
+gargoyle tunnel stop
+gargoyle tunnel status
+
+Mail (локальная почта/SMTP sink)
+gargoyle mail start --mode local|tunnel
+gargoyle mail stop
+gargoyle mail status
+
+Gargoyle Script (DSL)
+- Запуск: gargoyle script run ./scripts/sample.gsl
+- Команды: net.apply, mesh.send/mesh.recv, relay.start/stop,
+  tunnel.expose, mail.start, hub.start, emulate.run и др.
+- Подсказки: см. README + sample.gsl.
+
+Приватность (CTF-safe)
+- Tor strict (iptables, Linux) — блокирует non-Tor трафик.
+- Leak-check — проверка IP/DNS после старта Tor/VPN.
+- MAC randomization, закрытые порты по умолчанию.
+- RAM-only session — без записи на диск.
+
+USB режимы
+- usb_enabled: доступ к внешним USB внутри Gargoyle.
+- usb_read_only: только чтение (рекомендуется).
+
+Wipe
+gargoyle wipe
+gargoyle wipe --emergency (сохраняет identity key)
+
+Важно
+- Linux поддерживается лучше (LUKS, iptables, USB watcher).
+- Никакая система не дает 100% анонимности. Gargoyle — best-effort.

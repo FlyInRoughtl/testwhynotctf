@@ -4,10 +4,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 
-	"ctfvault/internal/config"
-	"ctfvault/internal/paths"
-	"ctfvault/internal/security"
+	"gargoyle/internal/config"
+	"gargoyle/internal/paths"
+	"gargoyle/internal/security"
 )
 
 type WipeMode int
@@ -18,7 +19,7 @@ const (
 )
 
 func EnsureHome(cfg config.Config) (string, string, error) {
-	homeDir, err := paths.HomeDir()
+	homeDir, err := resolveHome(cfg)
 	if err != nil {
 		return "", "", err
 	}
@@ -44,6 +45,24 @@ func EnsureHome(cfg config.Config) (string, string, error) {
 	}
 
 	return homeDir, identityPath, nil
+}
+
+func resolveHome(cfg config.Config) (string, error) {
+	if v := os.Getenv(paths.EnvHome); v != "" {
+		return v, nil
+	}
+	if cfg.Storage.RAMOnly && runtime.GOOS == "linux" {
+		base := "/dev/shm"
+		if info, err := os.Stat(base); err != nil || !info.IsDir() {
+			base = os.TempDir()
+		}
+		dir, err := os.MkdirTemp(base, "gargoyle-")
+		if err == nil {
+			_ = os.Setenv(paths.EnvHome, dir)
+			return dir, nil
+		}
+	}
+	return paths.HomeDir()
 }
 
 func Wipe(homeDir string, identityPath string, mode WipeMode) error {

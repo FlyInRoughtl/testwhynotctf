@@ -20,7 +20,7 @@ mkdir -p "$BIN_DIR"
 
 cd "$PROJ_DIR"
 go mod download
-go build -o "$BIN_DIR/ctfvault" ./cmd/ctfvault
-go build -o "$BIN_DIR/ctfvaultctl" ./cmd/ctfvaultctl
+go build -o "$BIN_DIR/gargoyle" ./cmd/gargoyle
+go build -o "$BIN_DIR/gargoylectl" ./cmd/gargoylectl
 
 echo "Build complete: $BIN_DIR"

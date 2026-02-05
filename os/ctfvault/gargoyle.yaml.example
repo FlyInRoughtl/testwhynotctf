@@ -1,4 +1,4 @@
-﻿# LEGACY config file name (ctfvault.yaml). Use gargoyle.yaml instead.
+﻿# Example config for Gargoyle
 system:
   ram_limit_mb: 2048
   cpu_limit: 2

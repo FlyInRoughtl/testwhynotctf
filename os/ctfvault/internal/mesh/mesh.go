@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"ctfvault/internal/security"
+	"gargoyle/internal/security"
 )
 
 var ErrNotImplemented = errors.New("not implemented")
@@ -108,6 +108,7 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 			ChunkSize: streamHeader.ChunkSize,
 			Algo:      streamHeader.Algo,
 			Depth:     streamHeader.Depth,
+			Offset:    streamHeader.Offset,
 		}
 		if err := writeHeader(conn, hdr); err != nil {
 			return err
@@ -117,6 +118,9 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 
 	if opts.RelayChain != "" && opts.Relay != "" {
 		return errors.New("relay and relay-chain are mutually exclusive")
+	}
+	if opts.RelayChain != "" && opts.Route != "onion" {
+		return errors.New("relay-chain requires route=onion")
 	}
 
 	if err := writeHeader(conn, hdr); err != nil {
@@ -191,17 +195,18 @@ func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
 		if hdr.Security == nil {
 			return "", errors.New("missing security header")
 		}
-		salt, nonceBase, _, depth, err := security.ParseStreamHeader(security.StreamHeader{
+		salt, nonceBase, _, depth, offset, err := security.ParseStreamHeader(security.StreamHeader{
 			Salt:      hdr.Security.Salt,
 			NonceBase: hdr.Security.NonceBase,
 			ChunkSize: hdr.Security.ChunkSize,
 			Algo:      hdr.Security.Algo,
 			Depth:     hdr.Security.Depth,
+			Offset:    hdr.Security.Offset,
 		})
 		if err != nil {
 			return "", err
 		}
-		if err := security.DecryptStream(conn, out, psk, nonceBase, salt, depth); err != nil {
+		if err := security.DecryptStream(conn, out, psk, nonceBase, salt, depth, offset); err != nil {
 			return "", err
 		}
 		return outPath, nil
@@ -214,7 +219,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
 }
 
 func connectTarget(opts SendOptions) (net.Conn, error) {
-	if opts.RelayChain != "" {
+	if opts.RelayChain != "" && opts.Route == "onion" {
 		chain, err := parseChain(opts.RelayChain)
 		if err != nil {
 			return nil, err
@@ -225,7 +230,7 @@ func connectTarget(opts SendOptions) (net.Conn, error) {
 		}
 		hdr := Header{
 			Version: 1,
-			Op:      "relay_chain",
+			Op:      "onion_chain",
 			Route:   strings.Join(chain[1:], ","),
 			Target:  opts.Target,
 			Token:   opts.Token,

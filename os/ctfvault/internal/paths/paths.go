@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 )
 
-const EnvHome = "CTFVAULT_HOME"
+const EnvHome = "GARGOYLE_HOME"
 
 func HomeDir() (string, error) {
 	if v := os.Getenv(EnvHome); v != "" {
@@ -19,7 +19,7 @@ func HomeDir() (string, error) {
 	if home == "" {
 		return "", errors.New("home directory not found")
 	}
-	return filepath.Join(home, ".ctfvault"), nil
+	return filepath.Join(home, ".gargoyle"), nil
 }
 
 func EnsureDir(path string) error {

@@ -1,4 +1,4 @@
-# CTF-Vault bootstrap (Windows)
+# Gargoyle bootstrap (Windows)
 $ErrorActionPreference = "Stop"
 
 function Ensure-Go {
@@ -24,8 +24,8 @@ try {
 
     Push-Location $proj
     go mod download
-    go build -o "$bin\ctfvault.exe" .\cmd\ctfvault
-    go build -o "$bin\ctfvaultctl.exe" .\cmd\ctfvaultctl
+    go build -o "$bin\gargoyle.exe" .\cmd\gargoyle
+    go build -o "$bin\gargoylectl.exe" .\cmd\gargoylectl
     Pop-Location
 
     Write-Host "Build complete: $bin" -ForegroundColor Green

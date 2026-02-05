@@ -7,6 +7,8 @@ import (
 	"net"
 	"strings"
 	"sync"
+
+	"gargoyle/internal/security"
 )
 
 type relayServer struct {
@@ -41,6 +43,15 @@ func RunRelay(ctx context.Context, listen string) error {
 	}
 }
 
+func RunRelayAsync(listen string) (func(), <-chan error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- RunRelay(ctx, listen)
+	}()
+	return cancel, errCh
+}
+
 func (s *relayServer) handle(conn net.Conn) {
 	defer func() {
 		if conn != nil {
@@ -63,6 +74,10 @@ func (s *relayServer) handle(conn net.Conn) {
 		return
 	case "relay_chain":
 		s.forward(conn, hdr)
+		conn = nil
+		return
+	case "onion_chain":
+		s.forwardOnion(conn, hdr)
 		conn = nil
 		return
 	default:
@@ -128,6 +143,85 @@ func (s *relayServer) forward(conn net.Conn, hdr Header) {
 
 	go pipeConn(conn, out)
 	go pipeConn(out, conn)
+}
+
+func (s *relayServer) forwardOnion(conn net.Conn, hdr Header) {
+	if hdr.Target == "" {
+		return
+	}
+
+	fileHdr, err := readHeader(conn)
+	if err != nil {
+		return
+	}
+	if fileHdr.Security == nil {
+		return
+	}
+	if fileHdr.Security.Depth <= 1 {
+		return
+	}
+
+	next := ""
+	rest := ""
+	if hdr.Route != "" {
+		parts := splitRoute(hdr.Route)
+		if len(parts) > 0 {
+			next = parts[0]
+			rest = strings.Join(parts[1:], ",")
+		}
+	}
+
+	target := hdr.Target
+	if next != "" {
+		target = next
+	}
+
+	out, err := net.Dial("tcp", target)
+	if err != nil {
+		return
+	}
+
+	if next != "" {
+		outHdr := Header{
+			Version: 1,
+			Op:      "onion_chain",
+			Route:   rest,
+			Target:  hdr.Target,
+			Token:   hdr.Token,
+		}
+		if err := writeHeader(out, outHdr); err != nil {
+			_ = out.Close()
+			return
+		}
+	}
+
+	fileHdr.Security.Offset++
+	fileHdr.Security.Depth--
+	if err := writeHeader(out, fileHdr); err != nil {
+		_ = out.Close()
+		return
+	}
+
+	salt, nonceBase, _, _, offset, err := security.ParseStreamHeader(security.StreamHeader{
+		Salt:      fileHdr.Security.Salt,
+		NonceBase: fileHdr.Security.NonceBase,
+		ChunkSize: fileHdr.Security.ChunkSize,
+		Algo:      fileHdr.Security.Algo,
+		Depth:     fileHdr.Security.Depth,
+		Offset:    fileHdr.Security.Offset,
+	})
+	if err != nil {
+		_ = out.Close()
+		return
+	}
+
+	psk := []byte(hdr.Token)
+	if err := security.PeelOneLayer(conn, out, psk, nonceBase, salt, offset-1); err != nil {
+		_ = out.Close()
+		return
+	}
+
+	_ = out.Close()
 }
 
 func splitRoute(route string) []string {

@@ -26,6 +26,7 @@ type SecurityStreamHeader struct {
 	ChunkSize int    `json:"chunk_size"`
 	Algo      string `json:"algo"`
 	Depth     int    `json:"depth"`
+	Offset    int    `json:"offset"`
 }
 
 func writeHeader(w io.Writer, hdr Header) error {
