@@ -32,6 +32,68 @@ function Ask-YesNo($question, $default = $true) {
     }
 }
 
+function Find-VeraCrypt() {
+    $cmd = Get-Command veracrypt -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $paths = @(
+        "$env:ProgramFiles\\VeraCrypt\\VeraCrypt.exe",
+        "$env:ProgramFiles(x86)\\VeraCrypt\\VeraCrypt.exe"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) { return $p }
+    }
+    return $null
+}
+
+function ConvertTo-PlainText([SecureString]$secure) {
+    if (-not $secure) { return "" }
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+}
+
+function Try-MountVeraCrypt($defaultContainer) {
+    $vcPath = Find-VeraCrypt
+    if (-not $vcPath) {
+        return $null
+    }
+    $useVC = Ask-YesNo "Use VeraCrypt container for encrypted storage? (best-effort)" $false
+    if (-not $useVC) {
+        return $null
+    }
+    $container = Read-Host "Container path (default: $defaultContainer)"
+    if (-not $container) { $container = $defaultContainer }
+    $sizeGb = Read-Host "Size in GB for new container (default 4)"
+    if (-not $sizeGb) { $sizeGb = "4" }
+    $letter = Read-Host "Mount drive letter (e.g., G)"
+    if (-not $letter) { $letter = "G" }
+    $passwordSecure = Read-Host "VeraCrypt password" -AsSecureString
+    $password = ConvertTo-PlainText $passwordSecure
+    if (-not (Test-Path $container)) {
+        $create = Ask-YesNo "Container not found. Create new?" $true
+        if ($create) {
+            try {
+                & $vcPath /create $container /size "${sizeGb}G" /password $password /hash sha512 /encryption AES /filesystem NTFS /pim 0 /quick /silent | Out-Null
+            } catch {
+                Write-Host "VeraCrypt create failed: $_" -ForegroundColor Red
+            }
+        }
+    }
+    try {
+        & $vcPath /v $container /l $letter /p $password /q /s | Out-Null
+    } catch {
+        Write-Host "VeraCrypt mount failed: $_" -ForegroundColor Red
+    }
+    $password = $null
+    if (Test-Path "$letter`:") {
+        return "$letter`:"
+    }
+    return $null
+}
+
 function Generate-IdentityKey($path, $length = 256, $group = 15) {
     $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+=[]{}:;,.<>?/"
     $bytes = New-Object byte[] ($length)
@@ -110,6 +172,8 @@ mesh:
   relay_url: ""
   onion_depth: 3
   metadata_level: "standard"
+  transport: "tls"
+  padding_bytes: 256
 
 ui:
   theme: "dark"
@@ -124,6 +188,7 @@ tunnel:
   type: "frp"
   server: ""
   token: ""
+  local_ip: "127.0.0.1"
 
 mail:
   mode: "local"
@@ -131,6 +196,10 @@ mail:
   local_server: true
   sink_listen: "127.0.0.1:1025"
   sink_ui: "127.0.0.1:8025"
+  mesh_enabled: true
+  mesh_listen: ":20025"
+  mesh_psk: ""
+  mesh_psk_file: ""
 "@ | Set-Content -Path $path -Encoding ascii
 }
 
@@ -177,7 +246,7 @@ if ($netMode -eq "gateway") {
 }
 $netMode = $netMode
 if ($netMode -eq "proxy") {
-    $proxyEngine = Ask-Choice "Proxy engine" @("sing-box", "xray")
+    $proxyEngine = Ask-Choice "Proxy engine" @("sing-box", "xray", "hiddify")
     $proxyConfig = Read-Host "Proxy config path"
     if (-not $proxyConfig) { throw "Proxy config path is required for proxy mode" }
 }
@@ -191,17 +260,22 @@ if ($target -like "Folder*") {
     $folder = Read-Host "Enter install folder path"
     if (-not $folder) { throw "Folder path is required" }
     New-Item -ItemType Directory -Force -Path $folder | Out-Null
-    foreach ($dir in @("data","downloads","logs","keys","shared")) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $folder $dir) | Out-Null
+    $homeRoot = $folder
+    $vcRoot = Try-MountVeraCrypt (Join-Path $folder "gargoyle.hc")
+    if ($vcRoot) {
+        $homeRoot = Join-Path $vcRoot "gargoyle"
     }
-    Write-Config (Join-Path $folder "gargoyle.yaml") $edition $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict
-    Generate-IdentityKey (Join-Path $folder "keys\identity.key") 256 15
+    foreach ($dir in @("data","downloads","logs","keys","shared")) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
+    }
+    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict
+    Generate-IdentityKey (Join-Path $homeRoot "keys\identity.key") 256 15
     if ($installScripts) {
-        $scriptsDir = Join-Path $folder "scripts"
+        $scriptsDir = Join-Path $homeRoot "scripts"
         New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
         Write-SampleScript (Join-Path $scriptsDir "sample.gsl")
     }
-    Write-Host "Folder install complete: $folder" -ForegroundColor Green
+    Write-Host "Folder install complete: $homeRoot" -ForegroundColor Green
     exit 0
 }
 
@@ -237,6 +311,10 @@ Format-Volume -Partition $part -FileSystem exFAT -AllocationUnitSize 262144 -New
 $drive = $part.DriveLetter
 if ($drive) {
     $homeRoot = "$drive`:\gargoyle"
+    $vcRoot = Try-MountVeraCrypt "$drive`:\gargoyle.hc"
+    if ($vcRoot) {
+        $homeRoot = Join-Path $vcRoot "gargoyle"
+    }
     New-Item -ItemType Directory -Force -Path $homeRoot | Out-Null
     foreach ($dir in @("data","downloads","logs","keys","shared","scripts")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
@@ -247,18 +325,20 @@ if ($drive) {
         Write-SampleScript (Join-Path $homeRoot "scripts\sample.gsl")
     }
 
-    $enableBitLocker = Ask-YesNo "Enable BitLocker on this USB? (requires admin/Pro)" $false
-    if ($enableBitLocker) {
-        $bitlocker = Get-Command manage-bde -ErrorAction SilentlyContinue
-        if ($bitlocker) {
-            Write-Host "Enabling BitLocker on $drive:`\" -ForegroundColor Yellow
-            try {
-                & manage-bde -on "$drive`:" -RecoveryPassword | Out-Host
-            } catch {
-                Write-Host "BitLocker failed: $_" -ForegroundColor Red
+    if (-not $vcRoot) {
+        $enableBitLocker = Ask-YesNo "Enable BitLocker on this USB? (requires admin/Pro)" $false
+        if ($enableBitLocker) {
+            $bitlocker = Get-Command manage-bde -ErrorAction SilentlyContinue
+            if ($bitlocker) {
+                Write-Host "Enabling BitLocker on $drive:`\" -ForegroundColor Yellow
+                try {
+                    & manage-bde -on "$drive`:" -RecoveryPassword | Out-Host
+                } catch {
+                    Write-Host "BitLocker failed: $_" -ForegroundColor Red
+                }
+            } else {
+                Write-Host "manage-bde not found (BitLocker unavailable)" -ForegroundColor Red
             }
-        } else {
-            Write-Host "manage-bde not found (BitLocker unavailable)" -ForegroundColor Red
         }
     }
 }

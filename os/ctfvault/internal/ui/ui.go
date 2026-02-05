@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"path/filepath"
@@ -10,9 +11,11 @@ import (
 	"time"
 
 	"gargoyle/internal/config"
+	"gargoyle/internal/mesh"
 	"gargoyle/internal/paths"
 	"gargoyle/internal/services"
 	"gargoyle/internal/system"
+	"gargoyle/internal/version"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -59,6 +62,8 @@ type model struct {
 	lastScanAt  time.Time
 	usbDevices  []string
 	usbStatus   string
+	meshPeers   []string
+	meshErr     string
 	services    *services.Manager
 	status      services.Status
 	lastMsg     string
@@ -66,6 +71,7 @@ type model struct {
 	confirmWipe bool
 	usbLocked   bool
 	usbEvents   <-chan system.USBEvent
+	bossMode    bool
 }
 
 type netScanMsg struct {
@@ -84,6 +90,11 @@ type usbScanMsg struct {
 
 type usbEventMsg struct {
 	Event system.USBEvent
+}
+
+type meshDiscoverMsg struct {
+	Peers []string
+	Err   error
 }
 
 func initialModel(cfg config.Config, home string, identity string, svc *services.Manager, usbEvents <-chan system.USBEvent) model {
@@ -107,6 +118,9 @@ func (m model) Init() tea.Cmd {
 	}
 	if m.usbEvents != nil {
 		cmds = append(cmds, usbWatchCmd(m.usbEvents))
+	}
+	if m.cfg.Mesh.DiscoveryEnabled {
+		cmds = append(cmds, discoverMeshCmd(m.cfg))
 	}
 	return tea.Batch(cmds...)
 }
@@ -163,7 +177,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lastMsg = ""
 			m.confirmWipe = false
 		}
+	case meshDiscoverMsg:
+		if msg.Err != nil {
+			m.meshErr = msg.Err.Error()
+		} else {
+			m.meshPeers = msg.Peers
+			m.meshErr = ""
+		}
 	case tea.KeyMsg:
+		if m.cfg.UI.BossKey && msg.String() == "f10" {
+			m.bossMode = !m.bossMode
+			return m, nil
+		}
 		if m.usbLocked {
 			if msg.String() == "x" {
 				if !m.confirmWipe {
@@ -237,10 +262,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = view(m.cursor)
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-			idx := int(msg.String()[0] - '1')
-			if idx >= 0 && idx < len(m.menu) {
-				m.cursor = idx
-				m.view = view(idx)
+			key := msg.String()
+			if len(key) > 0 {
+				idx := int(key[0] - '1')
+				if idx >= 0 && idx < len(m.menu) {
+					m.cursor = idx
+					m.view = view(idx)
+				}
 			}
 		case "r":
 			m.lastErr = ""
@@ -301,6 +329,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.bossMode {
+		return bossView(m)
+	}
 	appStyle := lipgloss.NewStyle().Padding(1, 2)
 	header := headerView(m)
 	sidebar := sidebarView(m)
@@ -318,7 +349,7 @@ func (m model) View() string {
 
 func headerView(m model) string {
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("GARGOYLE")
-	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("v1.3 - TUI")
+	subtitle := lipgloss.NewStyle().Foreground(lipgloss.Color("245")).Render("v" + version.Version + " - TUI")
 	return lipgloss.JoinHorizontal(lipgloss.Center, title, "  ", subtitle)
 }
 
@@ -372,8 +403,27 @@ func mainView(m model) string {
 }
 
 func footerView(m model) string {
-	hint := "Arrows: navigate | 1-9: jump | r: relay | d: doh | x: wipe | q/esc: quit"
+	hint := "Arrows: navigate | 1-9: jump | r: relay | d: doh | x: wipe | f10: boss | q/esc: quit"
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(hint)
+}
+
+func bossView(m model) string {
+	switch m.cfg.UI.BossMode {
+	case "blank":
+		return ""
+	case "htop":
+		return "top - 22:10:15 up  2:41,  1 user,  load average: 0.12, 0.09, 0.08\n\n" +
+			"Tasks: 109 total,   1 running, 108 sleeping,   0 stopped,   0 zombie\n" +
+			"%Cpu(s):  2.1 us,  1.0 sy,  0.0 ni, 96.5 id,  0.3 wa,  0.0 hi,  0.1 si,  0.0 st\n" +
+			"MiB Mem :   7800.0 total,   6211.5 free,    999.2 used,    589.3 buff/cache\n" +
+			"MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   6400.0 avail Mem\n\n" +
+			"  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND\n" +
+			"  972 root      20   0  102932   9876   8420 S   0.7  0.1   0:01.23 NetworkManager\n" +
+			" 1442 user      20   0  318400  30500  22000 S   1.3  0.4   0:12.88 gnome-shell\n"
+	default:
+		return "Configuring updates 35%...\n\n" +
+			"Do not turn off your computer."
+	}
 }
 
 func homeView(m model) string {
@@ -464,7 +514,7 @@ func emulateView(m model) string {
 func hubView(m model) string {
 	hubState := onOff(m.status.HubRunning)
 	tunnelState := onOff(m.status.TunnelRunning)
-	mailState := "sink " + onOff(m.status.MailSinkRunning) + " / local " + onOff(m.status.MailLocalRunning)
+	mailState := "sink " + onOff(m.status.MailSinkRunning) + " / local " + onOff(m.status.MailLocalRunning) + " / mesh " + onOff(m.status.MailMeshRunning)
 	return fmt.Sprintf(
 		"Resource Hub\n\nHub: %s (%s)\nTunnel: %s (%s)\nMail: %s\n\nHints:\n- hub start --listen 127.0.0.1:8080\n- tunnel expose <service> <port>\n- mail start --mode local|tunnel\n",
 		hubState,
@@ -476,11 +526,27 @@ func hubView(m model) string {
 }
 
 func toolsView(m model) string {
-	return "Tools\n\n- Crypto\n- Web\n- Pwn\n- Forensics\n- Reversing\n- Wireless\n\nStatus: not installed (use installer/wizard)"
+	return "Tools\n\n- Crypto\n- Web\n- Pwn\n- Forensics\n- Reversing\n- Wireless\n\nStatus: use `gargoyle tools list|install|edit`"
 }
 
 func meshView(m model) string {
-	return "Mesh\n\nStatus: direct mode\nSend/Recv: available\nRelay/Onion: available via CLI"
+	peers := "-"
+	if len(m.meshPeers) > 0 {
+		peers = strings.Join(m.meshPeers, "\n")
+	}
+	errLine := ""
+	if m.meshErr != "" {
+		errLine = "\nDiscovery error: " + m.meshErr
+	}
+	return fmt.Sprintf(
+		"Mesh\n\nStatus: direct mode\nSend/Recv: available\nRelay/Onion: available via CLI\nDiscovery: %s (port %d)\nPeers:\n%s\nClipboard share: %s\nTun: %s%s",
+		onOff(m.cfg.Mesh.DiscoveryEnabled),
+		m.cfg.Mesh.DiscoveryPort,
+		peers,
+		onOff(m.cfg.Mesh.ClipboardShare),
+		onOff(m.cfg.Mesh.TunEnabled),
+		errLine,
+	)
 }
 
 func statusView(m model) string {
@@ -506,7 +572,7 @@ func statusView(m model) string {
 	}
 
 	return fmt.Sprintf(
-		"Status\n\nRelay: %s\nListen: %s\nPID: %s\nError: %s\n\nDoH: %s\nListen: %s\nURL: %s\nPID: %d\nError: %s\n\nEmulate: %s (%s)\nTunnel: %s (%s)\nMail: sink %s / local %s\nHub: %s (%s)\n\n%s",
+		"Status\n\nRelay: %s\nListen: %s\nPID: %s\nError: %s\n\nDoH: %s\nListen: %s\nURL: %s\nPID: %d\nError: %s\n\nEmulate: %s (%s)\nTunnel: %s (%s)\nProxy: %s (%s)\nMail: sink %s / local %s / mesh %s\nHub: %s (%s)\nTelegram: %s\n\n%s",
 		relayState,
 		emptyIf(m.status.RelayListen),
 		relayPID,
@@ -520,10 +586,14 @@ func statusView(m model) string {
 		emptyIf(m.status.Emulate.App),
 		onOff(m.status.TunnelRunning),
 		emptyIf(m.status.TunnelServer),
+		onOff(m.status.ProxyRunning),
+		emptyIf(m.status.ProxyEngine),
 		onOff(m.status.MailSinkRunning),
 		onOff(m.status.MailLocalRunning),
+		onOff(m.status.MailMeshRunning),
 		onOff(m.status.HubRunning),
 		emptyIf(m.status.HubListen),
+		onOff(m.status.TelegramRunning),
 		statusLine.String(),
 	)
 }
@@ -673,6 +743,13 @@ func scanNetworksCmd() tea.Cmd {
 	}
 }
 
+func discoverMeshCmd(cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		peers, err := mesh.DiscoverPeers(context.Background(), cfg.Mesh.DiscoveryPort, cfg.Mesh.DiscoveryKey)
+		return meshDiscoverMsg{Peers: peers, Err: err}
+	}
+}
+
 func statusCmd(svc *services.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if svc == nil {
@@ -761,10 +838,14 @@ func parseNetshNetworks(out []byte) ([]string, error) {
 	var nets []string
 	for _, line := range bytes.Split(out, []byte{'\n'}) {
 		text := strings.TrimSpace(string(line))
-		if strings.HasPrefix(text, "SSID ") {
+		lower := strings.ToLower(text)
+		if (strings.Contains(lower, "ssid") && !strings.Contains(lower, "bssid")) || strings.Contains(lower, "имя сети") || strings.Contains(lower, "сеть") {
 			parts := strings.SplitN(text, ":", 2)
 			if len(parts) == 2 {
-				nets = append(nets, strings.TrimSpace(parts[1]))
+				name := strings.TrimSpace(parts[1])
+				if name != "" {
+					nets = append(nets, name)
+				}
 			}
 		}
 	}

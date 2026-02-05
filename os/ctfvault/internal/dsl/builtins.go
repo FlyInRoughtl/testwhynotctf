@@ -24,7 +24,7 @@ import (
 type Dependencies struct {
 	MeshConfig MeshConfig
 	Services   ServiceControl
-	Network    NetworkConfig
+	Network    config.NetworkConfig
 	Storage    StorageConfig
 	Emulate    config.EmulateConfig
 	Tunnel     config.TunnelConfig
@@ -36,6 +36,8 @@ type MeshConfig struct {
 	RelayURL      string
 	OnionDepth    int
 	MetadataLevel string
+	Transport     string
+	PaddingBytes  int
 }
 
 type ServiceControl interface {
@@ -51,23 +53,12 @@ type ServiceControl interface {
 	StopMailSink() error
 	StartMailLocal() error
 	StopMailLocal() error
+	StartMailMesh(listen, psk, pskFile, transport, dataDir string) error
+	StopMailMesh() error
 	StartHub(listen, dataDir string) error
 	StopHub() error
-}
-
-type NetworkConfig struct {
-	DNSProfile  string
-	DNSCustom   string
-	MACSpoof    bool
-	PortsOpen   bool
-	Mode        string
-	VPNType     string
-	VPNProfile  string
-	GatewayIP   string
-	ProxyEngine string
-	ProxyConfig string
-	TorAlways   bool
-	TorStrict   bool
+	StartProxy(engine, configPath string) error
+	StopProxy() error
 }
 
 type StorageConfig struct {
@@ -180,20 +171,7 @@ func RegisterBuiltins(e *Engine, deps Dependencies) {
 		return os.RemoveAll(args[0])
 	})
 	e.Register("net.apply", func(ctx *Context, _ []string) error {
-		result := system.ApplyNetwork(
-			deps.Network.DNSProfile,
-			deps.Network.DNSCustom,
-			deps.Network.MACSpoof,
-			deps.Network.PortsOpen,
-			deps.Network.Mode,
-			deps.Network.VPNType,
-			deps.Network.VPNProfile,
-			deps.Network.GatewayIP,
-			deps.Network.ProxyEngine,
-			deps.Network.ProxyConfig,
-			deps.Network.TorAlways,
-			deps.Network.TorStrict,
-		)
+		result := system.ApplyNetwork(deps.Network, deps.HomeDir)
 		for _, info := range result.Infos {
 			ctx.Out(info)
 		}
@@ -223,8 +201,31 @@ func RegisterBuiltins(e *Engine, deps Dependencies) {
 			Target:        target,
 			PSK:           psk,
 			Depth:         depth,
+			Transport:     deps.MeshConfig.Transport,
+			PaddingBytes:  deps.MeshConfig.PaddingBytes,
 		}
 		return mesh.Send(context.Background(), src, dst, opts)
+	})
+	e.Register("mesh.recv", func(ctx *Context, args []string) error {
+		if err := RequireArgs(args, 2); err != nil {
+			return err
+		}
+		listen := args[0]
+		outDir := args[1]
+		if err := guardWritablePath(outDir, deps.Storage.USBReadOnly); err != nil {
+			return err
+		}
+		psk := ""
+		if len(args) > 2 {
+			psk = args[2]
+		}
+		_, err := mesh.Receive(context.Background(), mesh.ReceiveOptions{
+			Listen:    listen,
+			OutDir:    outDir,
+			PSK:       psk,
+			Transport: deps.MeshConfig.Transport,
+		})
+		return err
 	})
 	e.Register("relay.start", func(ctx *Context, args []string) error {
 		listen := ":18080"
@@ -404,12 +405,71 @@ func RegisterBuiltins(e *Engine, deps Dependencies) {
 				return err
 			}
 		}
+		if deps.Mail.MeshEnabled {
+			if err := deps.Services.StartMailMesh(deps.Mail.MeshListen, deps.Mail.MeshPSK, deps.Mail.MeshPSKFile, deps.MeshConfig.Transport, filepath.Join(deps.HomeDir, "data")); err != nil {
+				return err
+			}
+		}
 		return nil
+	})
+	e.Register("mesh.chat", func(ctx *Context, args []string) error {
+		if err := RequireArgs(args, 3); err != nil {
+			return err
+		}
+		target := args[0]
+		psk := args[1]
+		msg := strings.Join(args[2:], " ")
+		opts := mesh.MessageOptions{
+			Target:       target,
+			PSK:          psk,
+			Transport:    deps.MeshConfig.Transport,
+			PaddingBytes: deps.MeshConfig.PaddingBytes,
+			Security:     true,
+			Depth:        deps.MeshConfig.OnionDepth,
+			Op:           "chat",
+		}
+		return mesh.SendMessage(context.Background(), msg, opts)
+	})
+	e.Register("mesh.clipboard.send", func(ctx *Context, args []string) error {
+		if err := RequireArgs(args, 2); err != nil {
+			return err
+		}
+		target := args[0]
+		psk := args[1]
+		text, err := system.ReadClipboard()
+		if err != nil {
+			return err
+		}
+		opts := mesh.MessageOptions{
+			Target:       target,
+			PSK:          psk,
+			Transport:    deps.MeshConfig.Transport,
+			PaddingBytes: deps.MeshConfig.PaddingBytes,
+			Security:     true,
+			Depth:        deps.MeshConfig.OnionDepth,
+			Op:           "clipboard",
+		}
+		return mesh.SendMessage(context.Background(), text, opts)
 	})
 	e.Register("mail.stop", func(ctx *Context, _ []string) error {
 		_ = deps.Services.StopMailSink()
 		_ = deps.Services.StopMailLocal()
+		_ = deps.Services.StopMailMesh()
 		return nil
+	})
+	e.Register("proxy.start", func(ctx *Context, args []string) error {
+		engine := deps.Network.ProxyEngine
+		configPath := deps.Network.ProxyConfig
+		if len(args) > 0 && args[0] != "" {
+			engine = args[0]
+		}
+		if len(args) > 1 && args[1] != "" {
+			configPath = args[1]
+		}
+		return deps.Services.StartProxy(engine, configPath)
+	})
+	e.Register("proxy.stop", func(ctx *Context, _ []string) error {
+		return deps.Services.StopProxy()
 	})
 	e.Register("hub.start", func(ctx *Context, args []string) error {
 		listen := "127.0.0.1:8080"

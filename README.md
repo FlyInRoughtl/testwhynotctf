@@ -24,21 +24,31 @@ CLI/бинарник: `gargoyle`.
 Инсталлер (TUI wizard):
 - Windows: `installers/windows/wizard.cmd`
 - Linux: `bash installers/linux/wizard.sh`
+  - Windows (опционально): VeraCrypt контейнер для шифрования данных (если установлен)
 
 Что уже реализовано (MVP):
 - CLI с базовыми командами и TUI-прототипом
 - Конфиг `gargoyle.yaml` и валидация
-- Прямой зашифрованный обмен файлами по TCP (`mesh send` / `mesh recv`)
+- Прямой зашифрованный обмен файлами (TCP/TLS) + опциональный padding
 - TUI виджеты с анимацией, меню, экраном статуса и горячими клавишами (relay/DoH)
 - Relay-сервер для передачи через публичные сети (V1.1)
 - Gargoyle Script (DSL) + пример скрипта
 - Экстренный wipe в TUI (клавиша `x`, двойное подтверждение)
 - USB remove watcher (Linux, best-effort): при отключении носителя блокирует UI и требует emergency wipe
 - RAM-only session (Linux, best-effort)
-- EmulateEL (Linux GUI): запуск приложений через CLI/TUI
+- EmulateEL (Linux GUI): запуск приложений через CLI/TUI, privacy mode через bubblewrap (best-effort)
 - Resource Hub (webhook/file drop/vault/inbox)
 - Tunnel (FRP, self-hosted)
-- Mail: SMTP-sink + local mail (Postfix/Dovecot)
+- Mail: SMTP-sink + local mail (Postfix/Dovecot) + mesh-mail
+- Proxy service (sing-box/xray/hiddify)
+- Mesh discovery (UDP broadcast, best-effort)
+- Mesh chat/clipboard (CLI)
+- Mesh tun/tap overlay (Linux, best-effort)
+- Telegram C2 (allowlist, best-effort)
+- Boss-key (F10) в TUI
+- Tools pack (tools.yaml) + CLI installer
+- Doctor/Update команды
+- Live-USB build skeleton (os/liveusb)
 
 Планируется далее:
 - Relay/Onion маршруты, полноценный mesh
@@ -47,10 +57,10 @@ CLI/бинарник: `gargoyle`.
 Пример (MVP file transfer):
 ```
 # receiver
-gargoyle mesh recv --listen :19999 --out ./downloads --psk secret
+gargoyle mesh recv --listen :19999 --out ./downloads --psk secret --transport tls
 
 # sender
-gargoyle mesh send ./file.txt file.txt --to 127.0.0.1:19999 --security --psk secret --depth 3
+gargoyle mesh send ./file.txt file.txt --to 127.0.0.1:19999 --security --psk secret --depth 3 --transport tls --pad 256
 ```
 
 Пример (relay через публичную сеть):
@@ -82,16 +92,55 @@ EmulateEL:
 - CLI: `gargoyle emulate run firefox`
 - TUI: вкладка Emulate, горячие клавиши `f/t/o/s`
 - Privacy mode — best-effort, без 100% гарантии
+- Anti-capture (best-effort): `emulate.display_server: cage|gamescope|weston`
 
 Tunnel (FRP):
-- `gargoyle tunnel expose web 8080`
+- `gargoyle tunnel expose web 8080 --local-ip 127.0.0.1`
 - Требуется `frpc` и заполненный `tunnel.server` в конфиге (host:port)
 - Relay остаётся fallback для file-transfer (mesh relay)
+
+Tunnel (WSS, встроенный):
+- Server: `gargoyle tunnel wss-serve --listen :8443 --public :8080 --service web --token SECRET`
+- Client: `gargoyle tunnel wss-connect --server wss://host:8443 --service web --token SECRET --local 127.0.0.1:8080`
+
+Mesh discovery:
+- `gargoyle mesh discover`
+- `gargoyle mesh advertise --listen :19999`
+
+Mesh chat:
+- `gargoyle mesh chat send --to 1.2.3.4:19997 "hello"`
+- `gargoyle mesh chat listen --listen :19997`
+
+Mesh clipboard:
+- `gargoyle mesh clipboard send --to 1.2.3.4:19996`
+- `gargoyle mesh clipboard listen --listen :19996`
+
+Mesh tun (overlay VPN):
+- `gargoyle mesh tun serve --listen :20100 --dev gargoyle0 --cidr 10.42.0.1/24`
+- `gargoyle mesh tun connect --to 1.2.3.4:20100 --dev gargoyle0 --cidr 10.42.0.2/24`
+
+Tools pack:
+- `gargoyle tools list`
+- `gargoyle tools install`
+- `gargoyle tools edit`
+
+Doctor/Update:
+- `gargoyle doctor`
+- `gargoyle update --url https://... --sha256 <sum>`
+
+Telegram C2:
+- `gargoyle telegram start`
+- `/stats`, `/cli <cmd>`, `/wipe` (если включено в конфиг)
+
+Gateway (Whonix-like, best-effort):
+- `gargoyle gateway start --wan wlan0`
+- `gargoyle gateway stop`
 
 Mail:
 - `gargoyle mail start --mode local`
 - SMTP-sink слушает `mail.sink_listen`, письма в `data/mail/inbox/<addr>`
 - Local mail: Postfix+Dovecot (Linux)
+- Mesh mail: `gargoyle mail send --to user@host --mesh host:port`
 - Публичный доступ: включить `mail.mode: tunnel` и настроить `tunnel.server`
 
 Resource Hub:
@@ -104,7 +153,7 @@ Resource Hub:
 Gargoyle Script (DSL):
 - Запуск: `gargoyle script run ./scripts/sample.gsl`
 
-Команды Gargoyle Script (DSL, v1.3):
+Команды Gargoyle Script (DSL, v2.1b):
 - `print <text...>` — вывести строку
 - `set <var> <value...>` — установить переменную (пока без интерполяции)
 - `sleep <ms>` — пауза в миллисекундах
@@ -116,6 +165,7 @@ Gargoyle Script (DSL):
 - `file.delete <path>` — удалить файл/папку
 - `net.apply` — применить сетевой профиль из `gargoyle.yaml`
 - `mesh.send <src> <dst> <target> <psk> [depth]` — отправить файл
+- `mesh.recv <listen> <out> [psk]` — принять файл
 - `relay.start [listen]` — запустить relay (по умолчанию `:18080`)
 - `relay.stop` — остановить relay
 - `doh.start <url> [listen]` — запустить DoH (по умолчанию `127.0.0.1:5353`)
@@ -130,6 +180,8 @@ Gargoyle Script (DSL):
 - `tunnel.stop` — остановить туннель
 - `mail.start` — запустить почтовый sink/local
 - `mail.stop` — остановить почту
+- `proxy.start [engine] [config]` — запустить proxy engine
+- `proxy.stop` — остановить proxy engine
 - `hub.start [listen]` — старт Resource Hub
 - `hub.stop` — остановить Resource Hub
 
@@ -138,7 +190,7 @@ Gargoyle Script (DSL):
 - `network.vpn_type`: `openvpn` | `wireguard`
 - `network.vpn_profile`: путь к профилю VPN
 - `network.gateway_ip`: IP шлюза/raspberry
-- `network.proxy_engine`: `sing-box` | `xray`
+- `network.proxy_engine`: `sing-box` | `xray` | `hiddify`
 - `network.proxy_config`: путь к конфигу proxy engine
 - `network.tor_always_on`: запуск Tor при старте (best-effort)
 - `network.tor_strict`: строгий Tor (iptables, только Tor-трафик)
@@ -148,7 +200,9 @@ Gargoyle Script (DSL):
 - `emulate.privacy_mode`: best-effort приватность EmulateEL
 - `tunnel.type`: `frp` | `relay`
 - `tunnel.server`: `host:port` FRP сервера
+- `tunnel.local_ip`: локальный IP для проброса (по умолчанию 127.0.0.1)
 - `mail.mode`: `local` | `tunnel`
+- `mesh.padding_bytes`: байты padding после заголовка (уменьшает fingerprinting)
 
 Профили:
 - `gargoyle profile ctf-safe` — применить мягкий CTF-safe профиль
@@ -183,5 +237,8 @@ Leak-check:
 Proxy mode (sing-box/xray):
 - Используется как прокси‑движок (не классический VPN).
 - Указать `network.proxy_engine` и `network.proxy_config`.
+
+Live-USB build:
+- `os/liveusb/build.sh` (скелет сборки ISO, включает toram)
 
 

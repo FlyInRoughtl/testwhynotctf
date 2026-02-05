@@ -62,7 +62,7 @@ func (e *Engine) RunFile(ctx *Context, path string) error {
 func splitArgs(line string) []string {
 	var out []string
 	var b strings.Builder
-	inQuote := false
+	var quote rune
 	esc := false
 	for _, r := range line {
 		if esc {
@@ -73,10 +73,16 @@ func splitArgs(line string) []string {
 		switch r {
 		case '\\':
 			esc = true
-		case '"':
-			inQuote = !inQuote
+		case '"', '\'':
+			if quote == 0 {
+				quote = r
+			} else if quote == r {
+				quote = 0
+			} else {
+				b.WriteRune(r)
+			}
 		default:
-			if !inQuote && (r == ' ' || r == '\t') {
+			if quote == 0 && (r == ' ' || r == '\t') {
 				if b.Len() > 0 {
 					out = append(out, b.String())
 					b.Reset()
@@ -86,8 +92,8 @@ func splitArgs(line string) []string {
 			}
 		}
 	}
-	if inQuote {
-		return out
+	if esc {
+		b.WriteRune('\\')
 	}
 	if b.Len() > 0 {
 		out = append(out, b.String())

@@ -7,6 +7,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"gargoyle/internal/security"
 )
@@ -14,6 +15,7 @@ import (
 type relayServer struct {
 	mu      sync.Mutex
 	waiting map[string]net.Conn
+	sem     chan struct{}
 }
 
 func RunRelay(ctx context.Context, listen string) error {
@@ -26,20 +28,35 @@ func RunRelay(ctx context.Context, listen string) error {
 	}
 	defer ln.Close()
 
-	srv := &relayServer{waiting: make(map[string]net.Conn)}
+	srv := &relayServer{
+		waiting: make(map[string]net.Conn),
+		sem:     make(chan struct{}, 256),
+	}
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if ctx != nil {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 		}
-
+		if tl, ok := ln.(*net.TCPListener); ok {
+			_ = tl.SetDeadline(time.Now().Add(1 * time.Second))
+		}
 		conn, err := ln.Accept()
 		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue
+			}
 			return err
 		}
-		go srv.handle(conn)
+		select {
+		case srv.sem <- struct{}{}:
+			go srv.handle(conn)
+		default:
+			_ = conn.Close()
+		}
 	}
 }
 
@@ -53,16 +70,19 @@ func RunRelayAsync(listen string) (func(), <-chan error) {
 }
 
 func (s *relayServer) handle(conn net.Conn) {
+	defer func() { <-s.sem }()
 	defer func() {
 		if conn != nil {
 			_ = conn.Close()
 		}
 	}()
 
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	hdr, err := readHeader(conn)
 	if err != nil {
 		return
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 
 	switch hdr.Op {
 	case "relay":
@@ -107,6 +127,9 @@ func (s *relayServer) forward(conn net.Conn, hdr Header) {
 	if hdr.Target == "" {
 		return
 	}
+	if !decrementTTL(&hdr) {
+		return
+	}
 	next := ""
 	rest := ""
 	if hdr.Route != "" {
@@ -122,7 +145,7 @@ func (s *relayServer) forward(conn net.Conn, hdr Header) {
 		target = next
 	}
 
-	out, err := net.Dial("tcp", target)
+	out, err := dialRelayTarget(target)
 	if err != nil {
 		return
 	}
@@ -134,6 +157,7 @@ func (s *relayServer) forward(conn net.Conn, hdr Header) {
 			Route:   rest,
 			Target:  hdr.Target,
 			Token:   hdr.Token,
+			TTL:     hdr.TTL,
 		}
 		if err := writeHeader(out, outHdr); err != nil {
 			_ = out.Close()
@@ -147,6 +171,9 @@ func (s *relayServer) forward(conn net.Conn, hdr Header) {
 
 func (s *relayServer) forwardOnion(conn net.Conn, hdr Header) {
 	if hdr.Target == "" {
+		return
+	}
+	if !decrementTTL(&hdr) {
 		return
 	}
 
@@ -176,7 +203,7 @@ func (s *relayServer) forwardOnion(conn net.Conn, hdr Header) {
 		target = next
 	}
 
-	out, err := net.Dial("tcp", target)
+	out, err := dialRelayTarget(target)
 	if err != nil {
 		return
 	}
@@ -188,6 +215,7 @@ func (s *relayServer) forwardOnion(conn net.Conn, hdr Header) {
 			Route:   rest,
 			Target:  hdr.Target,
 			Token:   hdr.Token,
+			TTL:     hdr.TTL,
 		}
 		if err := writeHeader(out, outHdr); err != nil {
 			_ = out.Close()
@@ -241,8 +269,41 @@ func splitRoute(route string) []string {
 
 func pipeConn(dst net.Conn, src net.Conn) {
 	_, _ = io.Copy(dst, src)
-	_ = dst.Close()
-	_ = src.Close()
+	_ = closeWrite(dst)
+	_ = closeRead(src)
+}
+
+func dialRelayTarget(target string) (net.Conn, error) {
+	dialer := net.Dialer{Timeout: 8 * time.Second}
+	return dialer.Dial("tcp", target)
+}
+
+func decrementTTL(hdr *Header) bool {
+	if hdr == nil {
+		return false
+	}
+	if hdr.TTL == 0 {
+		hdr.TTL = len(splitRoute(hdr.Route)) + 1
+	}
+	if hdr.TTL <= 0 {
+		return false
+	}
+	hdr.TTL--
+	return true
+}
+
+func closeWrite(conn net.Conn) error {
+	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return conn.Close()
+}
+
+func closeRead(conn net.Conn) error {
+	if cr, ok := conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
 }
 
 var ErrRelayToken = errors.New("relay token is required")

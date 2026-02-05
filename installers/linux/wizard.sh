@@ -103,6 +103,8 @@ mesh:
   relay_url: ""
   onion_depth: 3
   metadata_level: "standard"
+  transport: "tls"
+  padding_bytes: 256
 
 ui:
   theme: "dark"
@@ -117,6 +119,7 @@ tunnel:
   type: "frp"
   server: ""
   token: ""
+  local_ip: "127.0.0.1"
 
 mail:
   mode: "local"
@@ -124,6 +127,10 @@ mail:
   local_server: true
   sink_listen: "127.0.0.1:1025"
   sink_ui: "127.0.0.1:8025"
+  mesh_enabled: true
+  mesh_listen: ":20025"
+  mesh_psk: ""
+  mesh_psk_file: ""
 EOF
 }
 
@@ -322,7 +329,7 @@ main() {
     done
   fi
   if [ "$net_mode" = "proxy" ]; then
-    proxy_engine=$(prompt_menu "Proxy engine" "sing-box" "xray")
+    proxy_engine=$(prompt_menu "Proxy engine" "sing-box" "xray" "hiddify")
     while true; do
       proxy_config=$(prompt_input "Proxy config path" "")
       [ -n "$proxy_config" ] && break

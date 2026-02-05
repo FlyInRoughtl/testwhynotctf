@@ -5,3 +5,4 @@
 
 Note: Full USB layout (ext4 + LUKS2) requires Linux wizard.
 Optional: BitLocker To Go can be enabled in the USB wizard (Windows Pro/Enterprise).
+Optional: VeraCrypt container support (best-effort, requires VeraCrypt installed).

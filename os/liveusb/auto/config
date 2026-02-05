@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Guard against recursive invocation: lb config executes auto/config.
+# Use an absolute lock file because live-build may change CWD.
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOCK_FILE="${ROOT_DIR}/.auto-config.lock"
+if [ -f "$LOCK_FILE" ]; then
+  exit 0
+fi
+touch "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT
+
+lb config \
+  --distribution bookworm \
+  --binary-images iso-hybrid \
+  --linux-flavours amd64 \
+  --bootappend-live "boot=live toram noeject" \
+  --debian-installer false \
+  --archive-areas "main contrib non-free-firmware"

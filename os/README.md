@@ -7,6 +7,7 @@ Planned areas:
 - services/ (network, storage, wipe)
 - ui/ (TUI shell)
 - mesh/ (relay, onion routing)
+- liveusb/ (live-build pipeline)
 
 See SPEC.md for details.
 

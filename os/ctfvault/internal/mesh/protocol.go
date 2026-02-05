@@ -7,6 +7,8 @@ import (
 	"io"
 )
 
+const maxHeaderSize = 64 * 1024
+
 type Header struct {
 	Version       int                   `json:"version"`
 	Op            string                `json:"op"`
@@ -17,6 +19,8 @@ type Header struct {
 	MetadataLevel string                `json:"metadata_level,omitempty"`
 	Target        string                `json:"target,omitempty"`
 	Route         string                `json:"route,omitempty"`
+	TTL           int                   `json:"ttl,omitempty"`
+	Padding       int                   `json:"padding,omitempty"`
 	Security      *SecurityStreamHeader `json:"security,omitempty"`
 }
 
@@ -34,7 +38,7 @@ func writeHeader(w io.Writer, hdr Header) error {
 	if err != nil {
 		return err
 	}
-	if len(data) > int(^uint32(0)) {
+	if len(data) > maxHeaderSize {
 		return errors.New("header too large")
 	}
 	var lenBuf [4]byte
@@ -52,6 +56,9 @@ func readHeader(r io.Reader) (Header, error) {
 		return Header{}, err
 	}
 	n := binary.BigEndian.Uint32(lenBuf[:])
+	if n == 0 || n > maxHeaderSize {
+		return Header{}, errors.New("invalid header size")
+	}
 	data := make([]byte, n)
 	if _, err := io.ReadFull(r, data); err != nil {
 		return Header{}, err

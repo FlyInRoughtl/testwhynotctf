@@ -2,14 +2,13 @@ package mesh
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"gargoyle/internal/security"
 )
@@ -27,15 +26,18 @@ type SendOptions struct {
 	Token         string
 	Depth         int
 	RelayChain    string
+	Transport     string
+	PaddingBytes  int
 }
 
 type ReceiveOptions struct {
-	Listen  string
-	OutDir  string
-	PSK     string
-	PSKFile string
-	Relay   string
-	Token   string
+	Listen    string
+	OutDir    string
+	PSK       string
+	PSKFile   string
+	Relay     string
+	Token     string
+	Transport string
 }
 
 func Up(ctx context.Context) error {
@@ -45,11 +47,13 @@ func Up(ctx context.Context) error {
 
 func Status(ctx context.Context) (string, error) {
 	_ = ctx
-	return "mesh: direct mode (relay/onion disabled in V1)", nil
+	return "mesh: direct mode (relay/onion disabled in this build)", nil
 }
 
 func Send(ctx context.Context, src, dst string, opts SendOptions) error {
-	_ = ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.Target == "" && opts.Relay == "" && opts.RelayChain == "" {
 		return errors.New("target or relay is required")
 	}
@@ -58,6 +62,18 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 	}
 	if opts.Depth <= 0 {
 		opts.Depth = 1
+	}
+	if opts.Transport == "" {
+		opts.Transport = "tcp"
+	}
+	if opts.PaddingBytes < 0 {
+		opts.PaddingBytes = 0
+	}
+	if opts.PaddingBytes > 1<<20 {
+		opts.PaddingBytes = 1 << 20
+	}
+	if opts.Transport == "tls" && (opts.Relay != "" || opts.RelayChain != "") {
+		return errors.New("tls transport is not supported with relay/relay-chain")
 	}
 
 	psk, err := loadPSK(opts.PSK, opts.PSKFile)
@@ -76,7 +92,7 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 		return err
 	}
 
-	conn, err := connectTarget(opts)
+	conn, err := connectTarget(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -87,6 +103,9 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 		Op:            "send",
 		Encrypted:     opts.Security,
 		MetadataLevel: opts.MetadataLevel,
+	}
+	if opts.PaddingBytes > 0 {
+		hdr.Padding = opts.PaddingBytes
 	}
 
 	if opts.MetadataLevel == "off" {
@@ -113,6 +132,9 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 		if err := writeHeader(conn, hdr); err != nil {
 			return err
 		}
+		if err := writePadding(conn, hdr.Padding); err != nil {
+			return err
+		}
 		return security.EncryptStream(file, conn, psk, nonceBase, salt, streamHeader.ChunkSize, streamHeader.Depth)
 	}
 
@@ -126,17 +148,28 @@ func Send(ctx context.Context, src, dst string, opts SendOptions) error {
 	if err := writeHeader(conn, hdr); err != nil {
 		return err
 	}
+	if err := writePadding(conn, hdr.Padding); err != nil {
+		return err
+	}
 	_, err = io.Copy(conn, file)
 	return err
 }
 
 func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
-	_ = ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if opts.Listen == "" {
 		opts.Listen = ":19999"
 	}
 	if opts.OutDir == "" {
 		opts.OutDir = "."
+	}
+	if opts.Transport == "" {
+		opts.Transport = "tcp"
+	}
+	if opts.Transport == "tls" && opts.Relay != "" {
+		return "", errors.New("tls transport is not supported with relay")
 	}
 	if err := os.MkdirAll(opts.OutDir, 0700); err != nil {
 		return "", err
@@ -149,7 +182,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
 
 	var conn net.Conn
 	if opts.Relay != "" {
-		rconn, err := net.Dial("tcp", opts.Relay)
+		rconn, err := dialTransportContext(ctx, opts.Relay, opts.Transport)
 		if err != nil {
 			return "", err
 		}
@@ -160,7 +193,7 @@ func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
 		conn = rconn
 		defer conn.Close()
 	} else {
-		ln, err := net.Listen("tcp", opts.Listen)
+		ln, err := listenTransport(opts.Listen, opts.Transport)
 		if err != nil {
 			return "", err
 		}
@@ -172,59 +205,28 @@ func Receive(ctx context.Context, opts ReceiveOptions) (string, error) {
 		defer conn.Close()
 	}
 
-	hdr, err := readHeader(conn)
-	if err != nil {
-		return "", err
-	}
-
-	name := hdr.Name
-	if name == "" {
-		name = fmt.Sprintf("received_%d.bin", time.Now().Unix())
-	}
-	outPath := filepath.Join(opts.OutDir, filepath.Base(name))
-	out, err := os.Create(outPath)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
-
-	if hdr.Encrypted {
-		if len(psk) == 0 {
-			return "", errors.New("psk is required to decrypt payload")
-		}
-		if hdr.Security == nil {
-			return "", errors.New("missing security header")
-		}
-		salt, nonceBase, _, depth, offset, err := security.ParseStreamHeader(security.StreamHeader{
-			Salt:      hdr.Security.Salt,
-			NonceBase: hdr.Security.NonceBase,
-			ChunkSize: hdr.Security.ChunkSize,
-			Algo:      hdr.Security.Algo,
-			Depth:     hdr.Security.Depth,
-			Offset:    hdr.Security.Offset,
-		})
-		if err != nil {
-			return "", err
-		}
-		if err := security.DecryptStream(conn, out, psk, nonceBase, salt, depth, offset); err != nil {
-			return "", err
-		}
-		return outPath, nil
-	}
-
-	if _, err := io.Copy(out, conn); err != nil {
-		return "", err
-	}
-	return outPath, nil
+	return receiveFromConn(conn, opts, psk)
 }
 
-func connectTarget(opts SendOptions) (net.Conn, error) {
+func writePadding(w io.Writer, size int) error {
+	if size <= 0 {
+		return nil
+	}
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return err
+	}
+	_, err := w.Write(buf)
+	return err
+}
+
+func connectTarget(ctx context.Context, opts SendOptions) (net.Conn, error) {
 	if opts.RelayChain != "" && opts.Route == "onion" {
 		chain, err := parseChain(opts.RelayChain)
 		if err != nil {
 			return nil, err
 		}
-		conn, err := net.Dial("tcp", chain[0])
+		conn, err := dialTransportContext(ctx, chain[0], opts.Transport)
 		if err != nil {
 			return nil, err
 		}
@@ -234,6 +236,7 @@ func connectTarget(opts SendOptions) (net.Conn, error) {
 			Route:   strings.Join(chain[1:], ","),
 			Target:  opts.Target,
 			Token:   opts.Token,
+			TTL:     len(chain) + 1,
 		}
 		if err := writeHeader(conn, hdr); err != nil {
 			conn.Close()
@@ -242,7 +245,7 @@ func connectTarget(opts SendOptions) (net.Conn, error) {
 		return conn, nil
 	}
 	if opts.Relay != "" {
-		conn, err := net.Dial("tcp", opts.Relay)
+		conn, err := dialTransportContext(ctx, opts.Relay, opts.Transport)
 		if err != nil {
 			return nil, err
 		}
@@ -252,7 +255,7 @@ func connectTarget(opts SendOptions) (net.Conn, error) {
 		}
 		return conn, nil
 	}
-	return net.Dial("tcp", opts.Target)
+	return dialTransportContext(ctx, opts.Target, opts.Transport)
 }
 
 func relayHandshake(conn net.Conn, token string, role string) error {

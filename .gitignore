@@ -1,2 +1,4 @@
 .gocache/
+.gomodcache/
 *.go.*
+os/liveusb/build/

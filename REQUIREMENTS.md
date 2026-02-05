@@ -22,15 +22,23 @@ Optional network tooling:
 - curl (Tor leak check via SOCKS)
 - frpc (FRP client for tunnel)
 - postfix + dovecot (local mail server)
-- sing-box or xray (proxy mode)
+- sing-box or xray or hiddify-cli (proxy mode)
+- avahi-utils (optional mDNS discovery if you switch from UDP broadcast)
+- wl-clipboard or xclip (clipboard share, Linux)
+- iproute2 (tun/tap setup)
 
 Optional (later stages):
 - QEMU/KVM for VM mode
-- USB imaging tools for Live-USB creation
+- live-build, squashfs-tools, xorriso (Live-USB build)
 
 EmulateEL (Linux GUI apps):
 - X11/Wayland desktop
 - firefox / torbrowser-launcher / xdg-open (optional)
+- bubblewrap (privacy mode sandbox, best-effort)
+- cage / gamescope / weston (optional anti-capture display server)
+
+Windows extras:
+- VeraCrypt (optional encrypted container)
 
 Quick start:
 - Windows: run installers/windows/bootstrap.cmd

@@ -19,7 +19,7 @@ network:
   vpn_type: ""
   vpn_profile: ""
   gateway_ip: ""
-  proxy_engine: "" # sing-box|xray
+  proxy_engine: "" # sing-box|xray|hiddify
   proxy_config: ""
   dns_profile: "system" # system|xbox|custom
   dns_custom: ""
@@ -28,6 +28,12 @@ network:
   tor: false
   tor_always_on: false
   tor_strict: false
+  tor_trans_port: 9040
+  tor_dns_port: 9053
+  tor_use_bridges: false
+  tor_transport: "" # obfs4|meek|...
+  tor_bridge_lines: [] # list of Bridge lines
+  torrc_path: "" # optional custom torrc path
   mac_spoof: true
   wifi_enabled: true
   bluetooth_enabled: false
@@ -42,16 +48,31 @@ mesh:
   relay_url: ""
   onion_depth: 3
   metadata_level: "standard"
+  transport: "tls" # tcp|tls
+  padding_bytes: 256 # optional padding to reduce fingerprinting
+  discovery_enabled: false
+  discovery_port: 19998
+  discovery_key: ""
+  auto_join: false
+  chat_enabled: true
+  clipboard_share: false
+  clipboard_warn: true
+  tun_enabled: false
+  tun_device: "gargoyle0"
+  tun_cidr: "10.42.0.1/24"
+  tun_peer_cidr: "10.42.0.0/24"
 
 emulate:
   privacy_mode: true
   temp_dir: "ram"
   downloads_dir: "downloads"
+  display_server: "direct" # direct|cage|gamescope|weston
 
 tunnel:
-  type: "frp" # frp|relay
+  type: "frp" # frp|relay|wss
   server: ""
   token: ""
+  local_ip: "127.0.0.1"
 
 mail:
   mode: "local" # local|tunnel
@@ -59,9 +80,34 @@ mail:
   local_server: true
   sink_listen: "127.0.0.1:1025"
   sink_ui: "127.0.0.1:8025"
+  mesh_enabled: true
+  mesh_listen: ":20025"
+  mesh_psk: ""
+  mesh_psk_file: ""
 
 ui:
   theme: "dark"
   language: "ru"
+  boss_key: true
+  boss_mode: "update" # update|htop|blank
+
+tools:
+  file: "tools.yaml"
+  auto_install: false
+
+update:
+  url: ""
+  channel: "stable"
+  public_key: ""
+  auto: false
+
+telegram:
+  enabled: false
+  bot_token: ""
+  allowed_user_id: 0
+  pairing_ttl: 60
+  allow_cli: false
+  allow_wipe: false
+  allow_stats: true
 
 

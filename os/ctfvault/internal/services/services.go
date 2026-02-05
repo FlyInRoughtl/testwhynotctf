@@ -1,7 +1,12 @@
 package services
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"gargoyle/internal/config"
@@ -10,6 +15,9 @@ import (
 	"gargoyle/internal/hub"
 	"gargoyle/internal/mail"
 	"gargoyle/internal/mesh"
+	"gargoyle/internal/system"
+	"gargoyle/internal/telegram"
+	"gargoyle/internal/proxy"
 	"gargoyle/internal/tunnel"
 )
 
@@ -46,11 +54,26 @@ type Manager struct {
 	mailSinkStop    func() error
 	mailLocalErr    string
 	mailLocalOn     bool
+	mailMeshRunning bool
+	mailMeshListen  string
+	mailMeshErr     string
+	mailMeshStop    func() error
 
 	hubRunning bool
 	hubListen  string
 	hubErr     string
 	hubStop    func() error
+
+	proxyRunning bool
+	proxyEngine  string
+	proxyConfig  string
+	proxyPID     int
+	proxyErr     string
+	proxyStop    func() error
+
+	telegramRunning bool
+	telegramErr     string
+	telegramBot     *telegram.Bot
 }
 
 func New() *Manager {
@@ -179,7 +202,40 @@ func (m *Manager) StartTunnel(cfg config.TunnelConfig, service string, port int,
 	if cfg.Type == "relay" {
 		return errors.New("tunnel relay mode not implemented")
 	}
-	cmd, stop, err := tunnel.StartFRP(cfg.Server, service, port, cfg.Token, home)
+	if cfg.Type == "wss" {
+		local := cfg.LocalIP
+		if local == "" {
+			local = "127.0.0.1"
+		}
+		target := fmt.Sprintf("%s:%d", local, port)
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			err := tunnel.RunWSSClient(ctx, tunnel.WSSClient{
+				Server:  cfg.Server,
+				Service: service,
+				Token:   cfg.Token,
+				Local:   target,
+			})
+			if err != nil {
+				m.mu.Lock()
+				m.tunnelErr = err.Error()
+				m.mu.Unlock()
+			}
+		}()
+		m.tunnelRunning = true
+		m.tunnelType = cfg.Type
+		m.tunnelServer = cfg.Server
+		m.tunnelService = service
+		m.tunnelPort = port
+		m.tunnelPID = 0
+		m.tunnelErr = ""
+		m.tunnelStop = func() error {
+			cancel()
+			return nil
+		}
+		return nil
+	}
+	cmd, stop, err := tunnel.StartFRP(cfg.Server, service, port, cfg.Token, cfg.LocalIP, home)
 	if err != nil {
 		m.tunnelErr = err.Error()
 		return err
@@ -278,6 +334,59 @@ func (m *Manager) StopMailLocal() error {
 	return nil
 }
 
+func (m *Manager) StartMailMesh(listen, psk, pskFile, transport, dataDir string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.mailMeshRunning {
+		return errors.New("mail mesh already running")
+	}
+	if dataDir == "" {
+		dataDir = "."
+	}
+	outDir := filepath.Join(dataDir, "mail", "mesh_tmp")
+	if err := os.MkdirAll(outDir, 0700); err != nil {
+		m.mailMeshErr = err.Error()
+		return err
+	}
+	stop, err := mesh.Listen(mesh.ReceiveOptions{
+		Listen:    listen,
+		OutDir:    outDir,
+		PSK:       psk,
+		PSKFile:   pskFile,
+		Transport: transport,
+	}, func(path string) error {
+		if err := mail.StoreMeshMessage(dataDir, path); err != nil {
+			return err
+		}
+		_ = os.Remove(path)
+		return nil
+	})
+	if err != nil {
+		m.mailMeshErr = err.Error()
+		return err
+	}
+	m.mailMeshRunning = true
+	m.mailMeshListen = listen
+	m.mailMeshErr = ""
+	m.mailMeshStop = stop
+	return nil
+}
+
+func (m *Manager) StopMailMesh() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.mailMeshRunning || m.mailMeshStop == nil {
+		return errors.New("mail mesh not running")
+	}
+	if err := m.mailMeshStop(); err != nil {
+		m.mailMeshErr = err.Error()
+		return err
+	}
+	m.mailMeshRunning = false
+	m.mailMeshStop = nil
+	return nil
+}
+
 func (m *Manager) StartHub(listen, dataDir string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -311,6 +420,113 @@ func (m *Manager) StopHub() error {
 	return nil
 }
 
+func (m *Manager) StartProxy(engine, configPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.proxyRunning {
+		return errors.New("proxy already running")
+	}
+	cmd, stop, err := proxy.Start(engine, configPath)
+	if err != nil {
+		m.proxyErr = err.Error()
+		return err
+	}
+	pid := 0
+	if cmd.Process != nil {
+		pid = cmd.Process.Pid
+	}
+	m.proxyRunning = true
+	m.proxyEngine = engine
+	m.proxyConfig = configPath
+	m.proxyPID = pid
+	m.proxyErr = ""
+	m.proxyStop = stop
+	go func() {
+		_ = cmd.Wait()
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.proxyRunning = false
+		m.proxyStop = nil
+	}()
+	return nil
+}
+
+func (m *Manager) StopProxy() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.proxyRunning || m.proxyStop == nil {
+		return errors.New("proxy not running")
+	}
+	if err := m.proxyStop(); err != nil {
+		m.proxyErr = err.Error()
+		return err
+	}
+	m.proxyRunning = false
+	m.proxyStop = nil
+	return nil
+}
+
+func (m *Manager) StartTelegram(cfg config.TelegramConfig, cfgPath string, home string, identityPath string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.telegramRunning {
+		return errors.New("telegram already running")
+	}
+	saveUser := func(id int64) error {
+		if cfgPath == "" {
+			return nil
+		}
+		current, err := config.LoadOptional(cfgPath)
+		if err != nil {
+			return err
+		}
+		current.Telegram.AllowedUserID = id
+		return config.Save(cfgPath, current)
+	}
+	execFn := func(cmd string) (string, error) {
+		return system.RunShellCommand(cmd)
+	}
+	statsFn := func() string {
+		metrics, err := system.Snapshot()
+		if err != nil {
+			return "stats unavailable"
+		}
+		return system.FormatMetrics(metrics)
+	}
+	wipeFn := func() error {
+		return system.Wipe(home, identityPath, system.WipeEmergency)
+	}
+
+	bot, err := telegram.Start(telegram.Options{
+		Config:   cfg,
+		SaveUser: saveUser,
+		ExecFn:   execFn,
+		StatsFn:  statsFn,
+		WipeFn:   wipeFn,
+		Logf:     log.Printf,
+	})
+	if err != nil {
+		m.telegramErr = err.Error()
+		return err
+	}
+	m.telegramBot = bot
+	m.telegramRunning = true
+	m.telegramErr = ""
+	return nil
+}
+
+func (m *Manager) StopTelegram() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.telegramRunning || m.telegramBot == nil {
+		return errors.New("telegram not running")
+	}
+	m.telegramBot.Stop()
+	m.telegramRunning = false
+	m.telegramBot = nil
+	return nil
+}
+
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -340,9 +556,19 @@ func (m *Manager) Status() Status {
 		MailSinkError:    m.mailSinkErr,
 		MailLocalRunning: m.mailLocalOn,
 		MailLocalError:   m.mailLocalErr,
+		MailMeshRunning:  m.mailMeshRunning,
+		MailMeshListen:   m.mailMeshListen,
+		MailMeshError:    m.mailMeshErr,
 		HubRunning:       m.hubRunning,
 		HubListen:        m.hubListen,
 		HubError:         m.hubErr,
+		ProxyRunning:     m.proxyRunning,
+		ProxyEngine:      m.proxyEngine,
+		ProxyConfig:      m.proxyConfig,
+		ProxyPID:         m.proxyPID,
+		ProxyError:       m.proxyErr,
+		TelegramRunning:  m.telegramRunning,
+		TelegramError:    m.telegramErr,
 	}
 }
 
@@ -368,7 +594,17 @@ type Status struct {
 	MailSinkError    string
 	MailLocalRunning bool
 	MailLocalError   string
+	MailMeshRunning  bool
+	MailMeshListen   string
+	MailMeshError    string
 	HubRunning       bool
 	HubListen        string
 	HubError         string
+	ProxyRunning     bool
+	ProxyEngine      string
+	ProxyConfig      string
+	ProxyPID         int
+	ProxyError       string
+	TelegramRunning  bool
+	TelegramError    string
 }

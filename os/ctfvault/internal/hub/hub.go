@@ -1,11 +1,14 @@
 package hub
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,13 +17,26 @@ import (
 	"time"
 )
 
+const (
+	maxWebhookBytes    = 256 << 10
+	maxDropBytes       = 64 << 20
+	maxVaultBytes      = 512 << 20
+	maxTokenLength     = 64
+	maxEntriesPerToken = 200
+	maxTotalEntries    = 2000
+)
+
 type Server struct {
 	Listen  string
 	DataDir string
 
-	mu      sync.Mutex
-	running bool
-	srv     *http.Server
+	mu              sync.Mutex
+	running         bool
+	srv             *http.Server
+	tokenCounts     map[string]int
+	totalEntries    int
+	maxTokenEntries int
+	maxTotalEntries int
 }
 
 func (s *Server) Start() error {
@@ -32,6 +48,15 @@ func (s *Server) Start() error {
 	if s.Listen == "" {
 		s.Listen = "127.0.0.1:8080"
 	}
+	if s.tokenCounts == nil {
+		s.tokenCounts = make(map[string]int)
+	}
+	if s.maxTokenEntries <= 0 {
+		s.maxTokenEntries = maxEntriesPerToken
+	}
+	if s.maxTotalEntries <= 0 {
+		s.maxTotalEntries = maxTotalEntries
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/webhook/", s.handleWebhook)
@@ -40,8 +65,13 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/inbox/", s.handleInbox)
 
 	s.srv = &http.Server{
-		Addr:    s.Listen,
-		Handler: mux,
+		Addr:              s.Listen,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 	s.running = true
 	go func() {
@@ -77,12 +107,21 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, "/webhook/")
-	if token == "" {
-		http.Error(w, "token required", http.StatusBadRequest)
+	token, err := sanitizeToken(strings.TrimPrefix(r.URL.Path, "/webhook/"))
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
+	r.Body = http.MaxBytesReader(w, r.Body, maxWebhookBytes)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		if isTooLarge(err) {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
 	entry := map[string]interface{}{
 		"time":   time.Now().UTC().Format(time.RFC3339Nano),
 		"method": r.Method,
@@ -90,18 +129,30 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		"header": r.Header,
 		"body":   string(body),
 	}
-	if err := s.writeJSON(filepath.Join("webhook", token), entry); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if !s.acquireEntry(token) {
+		http.Error(w, "quota exceeded", http.StatusTooManyRequests)
 		return
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.releaseEntry(token)
+		}
+	}()
+	if err := s.writeJSON(filepath.Join("webhook", token), entry); err != nil {
+		s.logf("webhook write: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	committed = true
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) handleDrop(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimPrefix(r.URL.Path, "/drop/")
-	if token == "" {
-		http.Error(w, "token required", http.StatusBadRequest)
+	token, err := sanitizeToken(strings.TrimPrefix(r.URL.Path, "/drop/"))
+	if err != nil {
+		http.Error(w, "invalid token", http.StatusBadRequest)
 		return
 	}
 	switch r.Method {
@@ -111,29 +162,63 @@ func (s *Server) handleDrop(w http.ResponseWriter, r *http.Request) {
 			"<input type='file' name='file'/>"+
 			"<button type='submit'>upload</button></form>")
 	case http.MethodPost:
-		if err := r.ParseMultipartForm(64 << 20); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+		r.Body = http.MaxBytesReader(w, r.Body, maxDropBytes)
+		if err := r.ParseMultipartForm(8 << 20); err != nil {
+			if isTooLarge(err) {
+				http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		defer func() {
+			if r.MultipartForm != nil {
+				_ = r.MultipartForm.RemoveAll()
+			}
+		}()
 		file, header, err := r.FormFile("file")
 		if err != nil {
 			http.Error(w, "file required", http.StatusBadRequest)
 			return
 		}
 		defer file.Close()
+		if !s.acquireEntry(token) {
+			http.Error(w, "quota exceeded", http.StatusTooManyRequests)
+			return
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				s.releaseEntry(token)
+			}
+		}()
 		dir := s.pathJoin("drop", token)
 		if err := os.MkdirAll(dir, 0700); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.logf("drop mkdir: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		dst := filepath.Join(dir, header.Filename)
-		out, err := os.Create(dst)
+		out, dst, err := createUniqueFile(dir, header.Filename)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			s.logf("drop create: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
-		defer out.Close()
-		_, _ = io.Copy(out, file)
+		_, err = io.Copy(out, file)
+		if err != nil {
+			_ = out.Close()
+			_ = os.Remove(dst)
+			s.logf("drop write: %v", err)
+			http.Error(w, "upload failed", http.StatusInternalServerError)
+			return
+		}
+		if err := out.Close(); err != nil {
+			_ = os.Remove(dst)
+			s.logf("drop close: %v", err)
+			http.Error(w, "upload failed", http.StatusInternalServerError)
+			return
+		}
+		committed = true
 		_, _ = w.Write([]byte("uploaded"))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -146,38 +231,87 @@ func (s *Server) handleVault(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("POST file to /vault"))
 		return
 	}
-	if err := r.ParseMultipartForm(128 << 20); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	r.Body = http.MaxBytesReader(w, r.Body, maxVaultBytes)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		if isTooLarge(err) {
+			http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "file required", http.StatusBadRequest)
 		return
 	}
 	defer file.Close()
-	data, _ := io.ReadAll(file)
-	hash := sha256.Sum256(data)
-	sum := hex.EncodeToString(hash[:])
-	dir := s.pathJoin("vault")
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if !s.acquireEntry("vault") {
+		http.Error(w, "quota exceeded", http.StatusTooManyRequests)
 		return
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			s.releaseEntry("vault")
+		}
+	}()
+	dir := s.pathJoin("vault")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		s.logf("vault mkdir: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	tmp, err := os.CreateTemp(dir, "vault-*.bin")
+	if err != nil {
+		s.logf("vault temp: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	hasher := sha256.New()
+	n, err := io.Copy(io.MultiWriter(hasher, tmp), file)
+	if err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
+		s.logf("vault write: %v", err)
+		http.Error(w, "upload failed", http.StatusInternalServerError)
+		return
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		s.logf("vault close: %v", err)
+		http.Error(w, "upload failed", http.StatusInternalServerError)
+		return
+	}
+	sum := hex.EncodeToString(hasher.Sum(nil))
 	path := filepath.Join(dir, sum)
-	_ = os.WriteFile(path, data, 0600)
+	if _, err := os.Stat(path); err == nil {
+		_ = os.Remove(tmp.Name())
+	} else if err := os.Rename(tmp.Name(), path); err != nil {
+		_ = os.Remove(tmp.Name())
+		s.logf("vault rename: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	meta := map[string]interface{}{
 		"hash":     sum,
-		"name":     header.Filename,
+		"name":     safeFilename(header.Filename),
+		"size":     n,
 		"received": time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	_ = s.writeJSON(filepath.Join("vault", "index"), meta)
+	committed = true
 	_, _ = w.Write([]byte(sum))
 }
 
 func (s *Server) handleInbox(w http.ResponseWriter, r *http.Request) {
-	addr := strings.TrimPrefix(r.URL.Path, "/inbox/")
-	if addr == "" {
+	addr, err := sanitizeInbox(strings.TrimPrefix(r.URL.Path, "/inbox/"))
+	if err != nil {
 		http.Error(w, "address required", http.StatusBadRequest)
 		return
 	}
@@ -216,4 +350,137 @@ func (s *Server) pathJoin(parts ...string) string {
 		base = "."
 	}
 	return filepath.Join(append([]string{base}, parts...)...)
+}
+
+func (s *Server) logf(format string, args ...interface{}) {
+	log.Printf("hub: "+format, args...)
+}
+
+func (s *Server) acquireEntry(token string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.maxTotalEntries > 0 && s.totalEntries >= s.maxTotalEntries {
+		return false
+	}
+	if s.maxTokenEntries > 0 {
+		if s.tokenCounts[token] >= s.maxTokenEntries {
+			return false
+		}
+	}
+	s.totalEntries++
+	s.tokenCounts[token]++
+	return true
+}
+
+func (s *Server) releaseEntry(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tokenCounts[token] > 0 {
+		s.tokenCounts[token]--
+	}
+	if s.totalEntries > 0 {
+		s.totalEntries--
+	}
+}
+
+func sanitizeToken(token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" || len(token) > maxTokenLength {
+		return "", errors.New("invalid token")
+	}
+	for _, r := range token {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return "", errors.New("invalid token")
+	}
+	return token, nil
+}
+
+func sanitizeInbox(addr string) (string, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" || len(addr) > 128 {
+		return "", errors.New("invalid address")
+	}
+	for _, r := range addr {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '@' || r == '.' || r == '-' || r == '_':
+		default:
+			return "", errors.New("invalid address")
+		}
+	}
+	return addr, nil
+}
+
+func safeFilename(name string) string {
+	base := filepath.Base(name)
+	base = strings.TrimSpace(base)
+	if base == "" || base == "." || base == ".." {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range base {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteRune('_')
+		}
+	}
+	out := strings.Trim(b.String(), "._-")
+	if out == "" {
+		return ""
+	}
+	return out
+}
+
+func createUniqueFile(dir, name string) (*os.File, string, error) {
+	safe := safeFilename(name)
+	if safe == "" {
+		safe = "file_" + randHex(6)
+	}
+	ext := filepath.Ext(safe)
+	stem := strings.TrimSuffix(safe, ext)
+	for i := 0; i < 100; i++ {
+		candidate := stem
+		if i > 0 {
+			candidate = fmt.Sprintf("%s_%d", stem, i)
+		}
+		filename := candidate + ext
+		path := filepath.Join(dir, filename)
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if err == nil {
+			return f, path, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", errors.New("unable to allocate file name")
+}
+
+func randHex(n int) string {
+	if n <= 0 {
+		n = 6
+	}
+	buf := make([]byte, n)
+	if _, err := rand.Read(buf); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(buf)
+}
+
+func isTooLarge(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, http.ErrBodyReadAfterClose) {
+		return true
+	}
+	if strings.Contains(err.Error(), "http: request body too large") {
+		return true
+	}
+	return false
 }

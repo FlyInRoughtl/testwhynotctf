@@ -4,6 +4,38 @@ All notable changes to Gargoyle will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1b] - 2026-02-05
+### Added
+- Mesh TLS transport with optional header padding to reduce fingerprinting.
+- Mesh-mail (local + mesh by default) and `mail send` over mesh.
+- Proxy service commands (sing-box/xray/hiddify).
+- EmulateEL privacy mode uses bubblewrap on Linux when available.
+- EmulateEL display-server wrappers (cage/gamescope/weston) for best-effort anti-capture.
+- Mesh discovery (UDP broadcast), chat, clipboard, and tun/tap overlay (Linux).
+- Telegram C2 (allowlist/pairing, best-effort).
+- Tools pack (`tools.yaml`) + CLI manager.
+- `doctor` and `update` commands.
+- Boss-key (F10) in TUI.
+- Live-USB build skeleton (os/liveusb).
+- Tor transproxy config (torrc + iptables strict).
+- WSS tunnel (built-in server/client).
+- Gateway mode (Whonix-like via namespaces, best-effort).
+- Optional VeraCrypt container support in Windows wizard (best-effort).
+- Hub hardening: size limits, safer file handling, server timeouts.
+- Tunnel hardening: service name validation, temp config cleanup, local_ip option.
+- Relay safety: connection limiter + TTL to avoid chain loops.
+### Fixed
+- SMTP sink enforces message size limit to avoid memory abuse.
+
+### Changed
+- UI header now uses the version constant.
+- Mesh defaults: TLS transport + padding bytes.
+- DSL argument parser handles escapes/quotes more safely.
+
+### Known Limitations
+- Hiddify CLI integration is best-effort and requires external install.
+- VeraCrypt container creation/mount is best-effort and depends on local setup.
+
 ## [1.3.0] - 2026-02-05
 ### Added
 - TUI shell with dashboard, menu navigation, status screens, and hotkeys.

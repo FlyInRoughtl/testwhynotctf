@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -17,6 +18,9 @@ type Config struct {
 	Tunnel   TunnelConfig   `yaml:"tunnel"`
 	Mail     MailConfig     `yaml:"mail"`
 	UI       UIConfig       `yaml:"ui"`
+	Tools    ToolsConfig    `yaml:"tools"`
+	Update   UpdateConfig   `yaml:"update"`
+	Telegram TelegramConfig `yaml:"telegram"`
 }
 
 type SystemConfig struct {
@@ -50,6 +54,12 @@ type NetworkConfig struct {
 	Tor              bool   `yaml:"tor"`
 	TorAlwaysOn      bool   `yaml:"tor_always_on"`
 	TorStrict        bool   `yaml:"tor_strict"`
+	TorTransPort     int    `yaml:"tor_trans_port"`
+	TorDNSPort       int    `yaml:"tor_dns_port"`
+	TorUseBridges    bool   `yaml:"tor_use_bridges"`
+	TorTransport     string `yaml:"tor_transport"`
+	TorBridgeLines   []string `yaml:"tor_bridge_lines"`
+	TorrcPath        string `yaml:"torrc_path"`
 	MACSpoof         bool   `yaml:"mac_spoof"`
 	WifiEnabled      bool   `yaml:"wifi_enabled"`
 	BluetoothEnabled bool   `yaml:"bluetooth_enabled"`
@@ -66,18 +76,33 @@ type MeshConfig struct {
 	RelayURL      string `yaml:"relay_url"`
 	OnionDepth    int    `yaml:"onion_depth"`
 	MetadataLevel string `yaml:"metadata_level"`
+	Transport     string `yaml:"transport"`
+	PaddingBytes  int    `yaml:"padding_bytes"`
+	DiscoveryEnabled bool   `yaml:"discovery_enabled"`
+	DiscoveryPort    int    `yaml:"discovery_port"`
+	DiscoveryKey     string `yaml:"discovery_key"`
+	AutoJoin         bool   `yaml:"auto_join"`
+	ChatEnabled      bool   `yaml:"chat_enabled"`
+	ClipboardShare   bool   `yaml:"clipboard_share"`
+	ClipboardWarn    bool   `yaml:"clipboard_warn"`
+	TunEnabled       bool   `yaml:"tun_enabled"`
+	TunDevice        string `yaml:"tun_device"`
+	TunCIDR          string `yaml:"tun_cidr"`
+	TunPeerCIDR      string `yaml:"tun_peer_cidr"`
 }
 
 type EmulateConfig struct {
 	PrivacyMode  bool   `yaml:"privacy_mode"`
 	TempDir      string `yaml:"temp_dir"`
 	DownloadsDir string `yaml:"downloads_dir"`
+	DisplayServer string `yaml:"display_server"`
 }
 
 type TunnelConfig struct {
-	Type   string `yaml:"type"`
-	Server string `yaml:"server"`
-	Token  string `yaml:"token"`
+	Type    string `yaml:"type"`
+	Server  string `yaml:"server"`
+	Token   string `yaml:"token"`
+	LocalIP string `yaml:"local_ip"`
 }
 
 type MailConfig struct {
@@ -86,11 +111,39 @@ type MailConfig struct {
 	LocalServer bool   `yaml:"local_server"`
 	SinkListen  string `yaml:"sink_listen"`
 	SinkUI      string `yaml:"sink_ui"`
+	MeshEnabled bool   `yaml:"mesh_enabled"`
+	MeshListen  string `yaml:"mesh_listen"`
+	MeshPSK     string `yaml:"mesh_psk"`
+	MeshPSKFile string `yaml:"mesh_psk_file"`
 }
 
 type UIConfig struct {
 	Theme    string `yaml:"theme"`
 	Language string `yaml:"language"`
+	BossKey  bool   `yaml:"boss_key"`
+	BossMode string `yaml:"boss_mode"`
+}
+
+type ToolsConfig struct {
+	File        string `yaml:"file"`
+	AutoInstall bool   `yaml:"auto_install"`
+}
+
+type UpdateConfig struct {
+	URL       string `yaml:"url"`
+	Channel   string `yaml:"channel"`
+	PublicKey string `yaml:"public_key"`
+	Auto      bool   `yaml:"auto"`
+}
+
+type TelegramConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	BotToken       string `yaml:"bot_token"`
+	AllowedUserID  int64  `yaml:"allowed_user_id"`
+	PairingTTL     int    `yaml:"pairing_ttl"`
+	AllowCLI       bool   `yaml:"allow_cli"`
+	AllowWipe      bool   `yaml:"allow_wipe"`
+	AllowStats     bool   `yaml:"allow_stats"`
 }
 
 func DefaultConfig() Config {
@@ -124,6 +177,12 @@ func DefaultConfig() Config {
 			Tor:              false,
 			TorAlwaysOn:      false,
 			TorStrict:        false,
+			TorTransPort:     9040,
+			TorDNSPort:       9053,
+			TorUseBridges:    false,
+			TorTransport:     "",
+			TorBridgeLines:   nil,
+			TorrcPath:        "",
 			MACSpoof:         true,
 			WifiEnabled:      true,
 			BluetoothEnabled: false,
@@ -138,16 +197,31 @@ func DefaultConfig() Config {
 			RelayURL:      "",
 			OnionDepth:    3,
 			MetadataLevel: "standard",
+			Transport:     "tls",
+			PaddingBytes:  256,
+			DiscoveryEnabled: false,
+			DiscoveryPort:    19998,
+			DiscoveryKey:     "",
+			AutoJoin:         false,
+			ChatEnabled:      true,
+			ClipboardShare:   false,
+			ClipboardWarn:    true,
+			TunEnabled:       false,
+			TunDevice:        "gargoyle0",
+			TunCIDR:          "10.42.0.1/24",
+			TunPeerCIDR:      "10.42.0.0/24",
 		},
 		Emulate: EmulateConfig{
 			PrivacyMode:  true,
 			TempDir:      "ram",
 			DownloadsDir: "downloads",
+			DisplayServer: "direct",
 		},
 		Tunnel: TunnelConfig{
-			Type:   "frp",
-			Server: "",
-			Token:  "",
+			Type:    "frp",
+			Server:  "",
+			Token:   "",
+			LocalIP: "127.0.0.1",
 		},
 		Mail: MailConfig{
 			Mode:        "local",
@@ -155,10 +229,35 @@ func DefaultConfig() Config {
 			LocalServer: true,
 			SinkListen:  "127.0.0.1:1025",
 			SinkUI:      "127.0.0.1:8025",
+			MeshEnabled: true,
+			MeshListen:  ":20025",
+			MeshPSK:     "",
+			MeshPSKFile: "",
 		},
 		UI: UIConfig{
 			Theme:    "dark",
 			Language: "ru",
+			BossKey:  true,
+			BossMode: "update",
+		},
+		Tools: ToolsConfig{
+			File:        "tools.yaml",
+			AutoInstall: false,
+		},
+		Update: UpdateConfig{
+			URL:       "",
+			Channel:   "stable",
+			PublicKey: "",
+			Auto:      false,
+		},
+		Telegram: TelegramConfig{
+			Enabled:       false,
+			BotToken:      "",
+			AllowedUserID: 0,
+			PairingTTL:    60,
+			AllowCLI:      false,
+			AllowWipe:     false,
+			AllowStats:    true,
 		},
 	}
 }
@@ -216,15 +315,45 @@ func validate(cfg Config) error {
 	default:
 		return errors.New("mesh.metadata_level must be off|standard|max")
 	}
+	switch cfg.Mesh.Transport {
+	case "", "tcp", "tls":
+	default:
+		return errors.New("mesh.transport must be tcp|tls")
+	}
+	if cfg.Mesh.PaddingBytes < 0 {
+		return errors.New("mesh.padding_bytes must be >= 0")
+	}
+	if cfg.Mesh.DiscoveryPort < 0 || cfg.Mesh.DiscoveryPort > 65535 {
+		return errors.New("mesh.discovery_port must be 0..65535")
+	}
+	if cfg.Mesh.TunEnabled {
+		if cfg.Mesh.TunDevice == "" {
+			return errors.New("mesh.tun_device is required when tun_enabled=true")
+		}
+		if cfg.Mesh.TunCIDR == "" {
+			return errors.New("mesh.tun_cidr is required when tun_enabled=true")
+		}
+		if cfg.Mesh.TunPeerCIDR == "" {
+			return errors.New("mesh.tun_peer_cidr is required when tun_enabled=true")
+		}
+	}
 	switch cfg.Emulate.TempDir {
 	case "", "ram", "disk":
 	default:
 		return errors.New("emulate.temp_dir must be ram|disk")
 	}
-	switch cfg.Tunnel.Type {
-	case "", "frp", "relay":
+	switch cfg.Emulate.DisplayServer {
+	case "", "direct", "cage", "gamescope", "weston":
 	default:
-		return errors.New("tunnel.type must be frp|relay")
+		return errors.New("emulate.display_server must be direct|cage|gamescope|weston")
+	}
+	switch cfg.Tunnel.Type {
+	case "", "frp", "relay", "wss":
+	default:
+		return errors.New("tunnel.type must be frp|relay|wss")
+	}
+	if strings.ContainsAny(cfg.Tunnel.LocalIP, "\r\n") {
+		return errors.New("tunnel.local_ip contains invalid characters")
 	}
 	switch cfg.Mail.Mode {
 	case "", "local", "tunnel":
@@ -233,6 +362,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Mail.Mode == "tunnel" && cfg.Tunnel.Server == "" {
 		return errors.New("mail.mode tunnel requires tunnel.server")
+	}
+	if cfg.Mail.MeshEnabled && cfg.Mail.MeshListen == "" {
+		return errors.New("mail.mesh_listen is required when mesh_enabled=true")
 	}
 	if cfg.UI.Language == "" {
 		return errors.New("ui.language is required")
@@ -249,6 +381,12 @@ func validate(cfg Config) error {
 	if cfg.Network.DNSProfile == "" {
 		return errors.New("network.dns_profile is required")
 	}
+	if cfg.Network.TorTransPort < 0 || cfg.Network.TorTransPort > 65535 {
+		return errors.New("network.tor_trans_port must be 0..65535")
+	}
+	if cfg.Network.TorDNSPort < 0 || cfg.Network.TorDNSPort > 65535 {
+		return errors.New("network.tor_dns_port must be 0..65535")
+	}
 	switch cfg.Network.Mode {
 	case "", "direct", "vpn", "gateway", "proxy":
 	default:
@@ -260,9 +398,9 @@ func validate(cfg Config) error {
 		return errors.New("network.vpn_type must be openvpn|wireguard")
 	}
 	switch cfg.Network.ProxyEngine {
-	case "", "sing-box", "xray":
+	case "", "sing-box", "xray", "hiddify":
 	default:
-		return errors.New("network.proxy_engine must be sing-box|xray")
+		return errors.New("network.proxy_engine must be sing-box|xray|hiddify")
 	}
 	if cfg.Network.Mode == "vpn" {
 		if cfg.Network.VPNType == "" {
@@ -282,6 +420,16 @@ func validate(cfg Config) error {
 		if cfg.Network.ProxyConfig == "" {
 			return errors.New("network.proxy_config required for proxy mode")
 		}
+	}
+	if cfg.UI.BossMode != "" {
+		switch cfg.UI.BossMode {
+		case "update", "htop", "blank":
+		default:
+			return errors.New("ui.boss_mode must be update|htop|blank")
+		}
+	}
+	if cfg.Telegram.PairingTTL < 0 || cfg.Telegram.PairingTTL > 3600 {
+		return errors.New("telegram.pairing_ttl must be 0..3600")
 	}
 	return nil
 }

@@ -73,6 +73,7 @@ func (s *SinkServer) handleConn(conn net.Conn) {
 
 	var from string
 	var rcpt []string
+	const maxSMTPBytes = 10 << 20
 
 	for {
 		line, err := r.ReadString('\n')
@@ -97,10 +98,14 @@ func (s *SinkServer) handleConn(conn net.Conn) {
 		case cmd == "DATA":
 			_, _ = w.WriteString("354 End data with <CR><LF>.<CR><LF>\r\n")
 			_ = w.Flush()
-			data := readData(r)
-			_ = s.storeMessage(from, rcpt, data)
+			data, tooLarge := readData(r, maxSMTPBytes)
+			if tooLarge {
+				_, _ = w.WriteString("552 Message size exceeds fixed maximum message size\r\n")
+			} else {
+				_ = s.storeMessage(from, rcpt, data)
+				_, _ = w.WriteString("250 OK\r\n")
+			}
 			rcpt = nil
-			_, _ = w.WriteString("250 OK\r\n")
 		case cmd == "RSET":
 			from = ""
 			rcpt = nil
@@ -118,8 +123,10 @@ func (s *SinkServer) handleConn(conn net.Conn) {
 	}
 }
 
-func readData(r *bufio.Reader) string {
+func readData(r *bufio.Reader, limit int64) (string, bool) {
 	var b strings.Builder
+	var size int64
+	tooLarge := false
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -128,9 +135,16 @@ func readData(r *bufio.Reader) string {
 		if strings.TrimSpace(line) == "." {
 			break
 		}
-		b.WriteString(line)
+		if !tooLarge {
+			size += int64(len(line))
+			if size > limit {
+				tooLarge = true
+			} else {
+				b.WriteString(line)
+			}
+		}
 	}
-	return b.String()
+	return b.String(), tooLarge
 }
 
 func cleanAddr(addr string) string {
