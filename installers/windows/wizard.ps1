@@ -138,6 +138,27 @@ function Generate-IdentityKey($path, $length = 256, $group = 15) {
     $formatted.ToString() | Set-Content -Path $path -Encoding ascii
 }
 
+function Generate-RecoveryCodes($path, $count = 10, $length = 30, $group = 5) {
+    $alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    $codes = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $count; $i++) {
+        $raw = New-Object System.Text.StringBuilder
+        for ($j = 0; $j -lt $length; $j++) {
+            $idx = Get-Random -Minimum 0 -Maximum $alphabet.Length
+            $raw.Append($alphabet[$idx]) | Out-Null
+        }
+        $formatted = New-Object System.Text.StringBuilder
+        for ($k = 0; $k -lt $raw.Length; $k++) {
+            $formatted.Append($raw[$k]) | Out-Null
+            if ((($k + 1) % $group) -eq 0 -and $k -ne ($raw.Length - 1)) {
+                $formatted.Append("-") | Out-Null
+            }
+        }
+        $codes.Add($formatted.ToString()) | Out-Null
+    }
+    $codes | Set-Content -Path $path -Encoding ascii
+}
+
 function Write-SampleScript($path) {
     @"
 # Gargoyle Script sample
@@ -169,6 +190,49 @@ function Copy-Binaries($destRoot) {
     }
 }
 
+function Copy-Source($destRoot) {
+    $src = Join-Path $repoRoot "os\\ctfvault"
+    if (-not (Test-Path (Join-Path $src "go.mod"))) {
+        Write-Host "WARN: source not found at $src" -ForegroundColor Yellow
+        return
+    }
+    $dest = Join-Path $destRoot "src\\ctfvault"
+    New-Item -ItemType Directory -Force -Path $dest | Out-Null
+    $robocopy = Get-Command robocopy -ErrorAction SilentlyContinue
+    if ($robocopy) {
+        $exclude = @(".git", ".cache", "bin", "dist", "tmp", "node_modules")
+        $xd = $exclude | ForEach-Object { "/XD `"$src\\$_`"" }
+        $cmd = @("robocopy", "`"$src`"", "`"$dest`"", "/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NC", "/NS", "/NP") + $xd
+        & cmd /c ($cmd -join " ") | Out-Null
+    } else {
+        Copy-Item -Recurse -Force $src $dest
+    }
+}
+
+function Build-Binaries($destRoot) {
+    if (-not (Has-Cmd "go")) {
+        Write-Host "WARN: Go not found; skipping build." -ForegroundColor Yellow
+        return
+    }
+    $src = Join-Path $destRoot "src\\ctfvault"
+    if (-not (Test-Path (Join-Path $src "go.mod"))) {
+        $src = Join-Path $repoRoot "os\\ctfvault"
+    }
+    if (-not (Test-Path (Join-Path $src "go.mod"))) {
+        Write-Host "WARN: go.mod not found; cannot build." -ForegroundColor Yellow
+        return
+    }
+    Push-Location $src
+    try {
+        go build -o (Join-Path $destRoot "gargoyle.exe") .\cmd\gargoyle
+        go build -o (Join-Path $destRoot "gargoylectl.exe") .\cmd\gargoylectl
+    } catch {
+        Write-Host "WARN: build failed: $_" -ForegroundColor Yellow
+    } finally {
+        Pop-Location
+    }
+}
+
 function Write-StartCmd($destRoot) {
     $path = Join-Path $destRoot "start.cmd"
     @"
@@ -182,6 +246,33 @@ if exist gargoyle.exe (
   echo Build it from the repo or copy gargoyle.exe here.
   echo Example: go build -o %~dp0gargoyle.exe .\\cmd\\gargoyle
 )
+pause
+"@ | Set-Content -Path $path -Encoding ascii
+}
+
+function Write-BuildCmd($destRoot) {
+    $path = Join-Path $destRoot "build.cmd"
+    @"
+@echo off
+set ROOT=%~dp0
+set SRC=%ROOT%src\ctfvault
+if not exist "%SRC%\go.mod" (
+  echo Source not found at %SRC%
+  echo Copy source to %ROOT%src\ctfvault or run wizard with "copy source".
+  pause
+  exit /b 1
+)
+where go >nul 2>nul
+if errorlevel 1 (
+  echo Go not found. Install Go, then retry.
+  pause
+  exit /b 1
+)
+pushd "%SRC%"
+go build -o "%ROOT%gargoyle.exe" .\cmd\gargoyle
+go build -o "%ROOT%gargoylectl.exe" .\cmd\gargoylectl
+popd
+echo Build complete.
 pause
 "@ | Set-Content -Path $path -Encoding ascii
 }
@@ -368,7 +459,7 @@ tools: []
 function Write-Config {
     param(
         $path, $edition, $opMode, $locale, $ramLimit, $cpuLimit, $dnsProfile, $dnsCustom, $wifi, $bt, $ports,
-        $usbEnabled, $usbReadOnly, $ramOnly, $netMode, $vpnType, $vpnProfile, $gatewayIP, $proxyEngine, $proxyConfig,
+        $usbEnabled, $usbReadOnly, $ramOnly, $autoWipeRemove, $autoWipeExit, $netMode, $vpnType, $vpnProfile, $gatewayIP, $proxyEngine, $proxyConfig,
         $torInstall, $torStrict, $torTransPort, $torDnsPort, $torUseBridges, $torTransportName, $torBridgeLines, $torrcPath,
         $macSpoof, $meshOnion, $meshDiscovery, $meshDiscoveryPort, $meshDiscoveryKey, $meshAutoJoin, $meshChat,
         $meshChatListen, $meshChatPSK, $meshChatPSKFile, $meshClipboard, $meshClipboardWarn, $meshTunEnabled,
@@ -398,6 +489,8 @@ storage:
   usb_enabled: $usbEnabled
   usb_read_only: $usbReadOnly
   ram_only: $ramOnly
+  auto_wipe_on_usb_remove: $autoWipeRemove
+  auto_wipe_on_exit: $autoWipeExit
 
 network:
   proxy: ""
@@ -548,6 +641,9 @@ if ($usbEnabled) {
     $usbReadOnly = Ask-YesNo "USB read-only mode?" $true
 }
 $ramOnly = Ask-YesNo "RAM-only session (no disk writes)?" $false
+$autoWipeRemove = Ask-YesNo "Auto wipe on USB removal?" ($opMode -eq "fullanon")
+$autoWipeExit = Ask-YesNo "Auto wipe on exit?" ($opMode -eq "fullanon")
+$genRecovery = Ask-YesNo "Generate recovery codes file (USB only recommended)?" ($target -like "USB*")
 
 $netMode = ""
 $vpnType = ""
@@ -631,6 +727,8 @@ $meshDiscovery = $false
 $meshChat = $true
 $meshClipboard = $false
 $usbLabel = "GARGOYLE_SHARED"
+$copySource = $true
+$autoBuild = $true
 if ($opMode -eq "fullanon") {
     $netMode = "direct"
     $torInstall = $true
@@ -751,6 +849,8 @@ if ($advanced) {
     $uiTheme = Ask-Choice "UI theme" @("dark", "light")
     $uiBossKey = Ask-YesNo "Boss-key enabled?" $uiBossKey
     $uiBossMode = Ask-Choice "Boss mode" @("update", "htop", "blank")
+    $copySource = Ask-YesNo "Copy Gargoyle source to USB (offline build)?" $copySource
+    $autoBuild = Ask-YesNo "Build gargoyle.exe now (if Go installed)?" $autoBuild
     $usbLabel = Read-Host "USB volume label (default $usbLabel)"
     if (-not $usbLabel) { $usbLabel = "GARGOYLE_SHARED" }
     $toolsProfile = Ask-Choice "Tools pack profile" @("ctf (recommended)", "none", "anonymity", "ctf+emulate", "osint")
@@ -805,9 +905,15 @@ if ($target -like "Folder*") {
     foreach ($dir in @("data","downloads","logs","keys","shared")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
     }
+    if ($genRecovery) {
+        Generate-RecoveryCodes (Join-Path $homeRoot "recovery_codes.txt") 10 30 5
+    }
+    if ($copySource) { Copy-Source $homeRoot }
+    if ($autoBuild) { Build-Binaries $homeRoot }
     Copy-Binaries $homeRoot
     Write-StartCmd $homeRoot
-    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
+    Write-BuildCmd $homeRoot
+    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $autoWipeRemove $autoWipeExit $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
     if ($toolsFile -like "tools\\packs\\*") {
         $pack = [System.IO.Path]::GetFileNameWithoutExtension($toolsFile)
         Write-PackFile $homeRoot $pack
@@ -876,9 +982,15 @@ if ($drive) {
     foreach ($dir in @("data","downloads","logs","keys","shared","scripts")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
     }
+    if ($genRecovery) {
+        Generate-RecoveryCodes (Join-Path $homeRoot "recovery_codes.txt") 10 30 5
+    }
+    if ($copySource) { Copy-Source $homeRoot }
+    if ($autoBuild) { Build-Binaries $homeRoot }
     Copy-Binaries $homeRoot
     Write-StartCmd $homeRoot
-    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
+    Write-BuildCmd $homeRoot
+    Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $autoWipeRemove $autoWipeExit $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
     if ($toolsFile -like "tools\\packs\\*") {
         $pack = [System.IO.Path]::GetFileNameWithoutExtension($toolsFile)
         Write-PackFile $homeRoot $pack

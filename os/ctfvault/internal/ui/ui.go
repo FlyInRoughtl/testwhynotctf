@@ -87,6 +87,7 @@ type model struct {
 	showHelp        bool
 	torStrictActive bool
 	torStrictErr    string
+	pendingQuit     bool
 }
 
 type netScanMsg struct {
@@ -218,9 +219,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.lastMsg = "emergency wipe completed"
 			m.usbLocked = false
+			if m.pendingQuit {
+				return m, tea.Quit
+			}
 		}
 	case usbEventMsg:
 		if msg.Event.Removed {
+			if m.cfg.Storage.AutoWipeOnRemove {
+				m.lastErr = ""
+				m.lastMsg = "USB removed: auto wipe"
+				return m, wipeCmd(m.home, m.cfg.Security.IdentityKeyPath)
+			}
 			m.usbLocked = true
 			m.lastErr = "USB removed: emergency wipe required"
 			m.lastMsg = ""
@@ -441,6 +450,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		switch msg.String() {
 		case "ctrl+c", "q", "esc":
+			if m.cfg.Storage.AutoWipeOnExit {
+				m.pendingQuit = true
+				m.lastMsg = "exit: auto wipe"
+				return m, wipeCmd(m.home, m.cfg.Security.IdentityKeyPath)
+			}
 			return m, tea.Quit
 		case "up", "k":
 			if m.cursor > 0 {

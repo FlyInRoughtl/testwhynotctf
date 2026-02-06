@@ -13,6 +13,8 @@ storage:
   usb_enabled: false
   usb_read_only: false
   ram_only: false
+  auto_wipe_on_usb_remove: false
+  auto_wipe_on_exit: false
 
 network:
   proxy: ""

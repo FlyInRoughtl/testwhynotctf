@@ -39,6 +39,8 @@ type StorageConfig struct {
 	USBEnabled        bool   `yaml:"usb_enabled"`
 	USBReadOnly       bool   `yaml:"usb_read_only"`
 	RAMOnly           bool   `yaml:"ram_only"`
+	AutoWipeOnRemove  bool   `yaml:"auto_wipe_on_usb_remove"`
+	AutoWipeOnExit    bool   `yaml:"auto_wipe_on_exit"`
 }
 
 type NetworkConfig struct {
@@ -189,6 +191,8 @@ func DefaultConfig() Config {
 			USBEnabled:        false,
 			USBReadOnly:       false,
 			RAMOnly:           false,
+			AutoWipeOnRemove:  false,
+			AutoWipeOnExit:    false,
 		},
 		Network: NetworkConfig{
 			Proxy:            "",

@@ -4,6 +4,7 @@ set -euo pipefail
 LOG_FILE="${LOG_FILE:-installer.log}"
 exec > >(tee -a "$LOG_FILE") 2>&1
 echo "[installer] log: $LOG_FILE"
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 use_whiptail=false
 if command -v whiptail >/dev/null 2>&1; then
@@ -113,19 +114,22 @@ print_plan() {
   [ -n "$persist" ] && echo "PERSIST size: $persist MB"
   [ -n "$free" ] && echo "Free space: $free MB"
   [ -n "$cluster" ] && echo "exFAT cluster: ${cluster} KB"
+  [ -n "$usb_label" ] && echo "USB label: $usb_label"
   echo "Edition: $edition"
   echo "Mode: $op_mode"
   echo "DNS: $dns_profile"
   echo "Tor strict: $tor_strict"
   echo "USB enabled: $usb_enabled, USB read-only: $usb_read_only"
   echo "RAM-only: $ram_only"
+  echo "Recovery codes: $gen_recovery"
+  echo "Copy source: $copy_source, Auto build: $auto_build"
   echo "Tools pack: $tools_file (auto_install=$tools_auto)"
   echo "========================"
   echo ""
 }
 
 write_config() {
-  local path="$1" edition="$2" op_mode="$3" locale="$4" ram_limit="$5" cpu_limit="$6" dns_profile="$7" dns_custom="$8" wifi="$9" bt="${10}" ports="${11}" usb_enabled="${12}" usb_read_only="${13}" ram_only="${14}" net_mode="${15}" vpn_type="${16}" vpn_profile="${17}" gateway_ip="${18}" proxy_engine="${19}" proxy_config="${20}" tor_install="${21}" tor_strict="${22}" tor_trans_port="${23}" tor_dns_port="${24}" tor_use_bridges="${25}" tor_transport="${26}" tor_bridge_lines="${27}" torrc_path="${28}" mac_spoof="${29}" mesh_onion="${30}" mesh_discovery="${31}" mesh_discovery_port="${32}" mesh_discovery_key="${33}" mesh_auto_join="${34}" mesh_chat="${35}" mesh_chat_listen="${36}" mesh_chat_psk="${37}" mesh_chat_psk_file="${38}" mesh_clipboard="${39}" mesh_clipboard_warn="${40}" mesh_tun_enabled="${41}" mesh_tun_device="${42}" mesh_tun_cidr="${43}" mesh_tun_peer_cidr="${44}" mesh_padding="${45}" mesh_transport="${46}" mesh_metadata="${47}" mesh_onion_depth="${48}" mesh_relay_allowlist="${49}" hotspot_ssid="${50}" hotspot_password="${51}" hotspot_ifname="${52}" hotspot_shared="${53}" emulate_privacy="${54}" emulate_temp="${55}" emulate_downloads="${56}" emulate_display="${57}" tunnel_type="${58}" tunnel_server="${59}" tunnel_token="${60}" tunnel_local_ip="${61}" mail_mode="${62}" mail_sink="${63}" mail_local="${64}" mail_sink_listen="${65}" mail_sink_ui="${66}" mail_mesh_enabled="${67}" mail_mesh_listen="${68}" mail_mesh_psk="${69}" mail_mesh_psk_file="${70}" ui_theme="${71}" ui_boss_key="${72}" ui_boss_mode="${73}" tools_file="${74}" tools_auto="${75}" tools_repo="${76}" update_url="${77}" update_channel="${78}" update_public_key="${79}" update_auto="${80}" sync_enabled="${81}" sync_target="${82}" sync_dir="${83}" sync_psk="${84}" sync_psk_file="${85}" sync_transport="${86}" sync_padding="${87}" sync_depth="${88}" telegram_enabled="${89}" telegram_bot_token="${90}" telegram_allowed_user="${91}" telegram_pairing_ttl="${92}" telegram_allow_cli="${93}" telegram_allow_wipe="${94}" telegram_allow_stats="${95}" doh_url="${96}" doh_listen="${97}"
+  local path="$1" edition="$2" op_mode="$3" locale="$4" ram_limit="$5" cpu_limit="$6" dns_profile="$7" dns_custom="$8" wifi="$9" bt="${10}" ports="${11}" usb_enabled="${12}" usb_read_only="${13}" ram_only="${14}" auto_wipe_remove="${15}" auto_wipe_exit="${16}" net_mode="${17}" vpn_type="${18}" vpn_profile="${19}" gateway_ip="${20}" proxy_engine="${21}" proxy_config="${22}" tor_install="${23}" tor_strict="${24}" tor_trans_port="${25}" tor_dns_port="${26}" tor_use_bridges="${27}" tor_transport="${28}" tor_bridge_lines="${29}" torrc_path="${30}" mac_spoof="${31}" mesh_onion="${32}" mesh_discovery="${33}" mesh_discovery_port="${34}" mesh_discovery_key="${35}" mesh_auto_join="${36}" mesh_chat="${37}" mesh_chat_listen="${38}" mesh_chat_psk="${39}" mesh_chat_psk_file="${40}" mesh_clipboard="${41}" mesh_clipboard_warn="${42}" mesh_tun_enabled="${43}" mesh_tun_device="${44}" mesh_tun_cidr="${45}" mesh_tun_peer_cidr="${46}" mesh_padding="${47}" mesh_transport="${48}" mesh_metadata="${49}" mesh_onion_depth="${50}" mesh_relay_allowlist="${51}" hotspot_ssid="${52}" hotspot_password="${53}" hotspot_ifname="${54}" hotspot_shared="${55}" emulate_privacy="${56}" emulate_temp="${57}" emulate_downloads="${58}" emulate_display="${59}" tunnel_type="${60}" tunnel_server="${61}" tunnel_token="${62}" tunnel_local_ip="${63}" mail_mode="${64}" mail_sink="${65}" mail_local="${66}" mail_sink_listen="${67}" mail_sink_ui="${68}" mail_mesh_enabled="${69}" mail_mesh_listen="${70}" mail_mesh_psk="${71}" mail_mesh_psk_file="${72}" ui_theme="${73}" ui_boss_key="${74}" ui_boss_mode="${75}" tools_file="${76}" tools_auto="${77}" tools_repo="${78}" update_url="${79}" update_channel="${80}" update_public_key="${81}" update_auto="${82}" sync_enabled="${83}" sync_target="${84}" sync_dir="${85}" sync_psk="${86}" sync_psk_file="${87}" sync_transport="${88}" sync_padding="${89}" sync_depth="${90}" telegram_enabled="${91}" telegram_bot_token="${92}" telegram_allowed_user="${93}" telegram_pairing_ttl="${94}" telegram_allow_cli="${95}" telegram_allow_wipe="${96}" telegram_allow_stats="${97}" doh_url="${98}" doh_listen="${99}"
   cat > "$path" <<EOF
 # Gargoyle config
 system:
@@ -142,6 +146,8 @@ storage:
   usb_enabled: $usb_enabled
   usb_read_only: $usb_read_only
   ram_only: $ram_only
+  auto_wipe_on_usb_remove: $auto_wipe_remove
+  auto_wipe_on_exit: $auto_wipe_exit
 
 network:
   proxy: ""
@@ -278,6 +284,36 @@ gen_identity_key() {
   done
   mkdir -p "$(dirname "$path")"
   printf "%s\n" "$formatted" > "$path"
+  chmod 600 "$path" || true
+}
+
+gen_recovery_codes() {
+  local path="$1"
+  local count="${2:-10}"
+  local length="${3:-30}"
+  local group="${4:-5}"
+  local alphabet='A-Za-z0-9'
+  mkdir -p "$(dirname "$path")"
+  : > "$path"
+  local i=0
+  while [ $i -lt "$count" ]; do
+    local raw
+    raw=$(tr -dc "$alphabet" </dev/urandom | head -c "$length")
+    if [ "${#raw}" -lt "$length" ]; then
+      continue
+    fi
+    local formatted=""
+    local j=0
+    while [ $j -lt ${#raw} ]; do
+      formatted+="${raw:$j:$group}"
+      j=$((j+group))
+      if [ $j -lt ${#raw} ]; then
+        formatted+="-"
+      fi
+    done
+    echo "$formatted" >> "$path"
+    i=$((i+1))
+  done
   chmod 600 "$path"
 }
 
@@ -293,6 +329,90 @@ print "Relay running"
 # Example mesh send: mesh.send <src> <dst> <target> <psk> [depth]
 # mesh.send ./file.txt file.txt 127.0.0.1:19999 secret 3
 EOF
+}
+
+copy_source() {
+  local dest_root="$1"
+  local src="$repo_root/os/ctfvault"
+  if [ ! -f "$src/go.mod" ]; then
+    echo "WARN: source not found at $src"
+    return
+  fi
+  mkdir -p "$dest_root/src"
+  if [ -d "$dest_root/src/ctfvault" ]; then
+    rm -rf "$dest_root/src/ctfvault"
+  fi
+  cp -a "$src" "$dest_root/src/ctfvault"
+}
+
+build_binaries() {
+  local dest_root="$1"
+  if ! command -v go >/dev/null 2>&1; then
+    echo "WARN: Go not found; skipping build."
+    return
+  fi
+  local src="$dest_root/src/ctfvault"
+  if [ ! -f "$src/go.mod" ]; then
+    src="$repo_root/os/ctfvault"
+  fi
+  if [ ! -f "$src/go.mod" ]; then
+    echo "WARN: go.mod not found; cannot build."
+    return
+  fi
+  (cd "$src" && go build -o "$dest_root/gargoyle" ./cmd/gargoyle && go build -o "$dest_root/gargoylectl" ./cmd/gargoylectl)
+}
+
+copy_binaries() {
+  local dest_root="$1"
+  local candidates=(
+    "$repo_root/gargoyle"
+    "$repo_root/gargoylectl"
+    "$repo_root/os/ctfvault/gargoyle"
+    "$repo_root/os/ctfvault/gargoylectl"
+  )
+  for bin in "${candidates[@]}"; do
+    if [ -f "$bin" ]; then
+      cp -f "$bin" "$dest_root/" || true
+    fi
+  done
+}
+
+write_start_sh() {
+  local dest_root="$1"
+  cat > "$dest_root/start.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+export GARGOYLE_HOME="$ROOT"
+if [ -x "$ROOT/gargoyle" ]; then
+  exec "$ROOT/gargoyle" start --tui --home "$ROOT"
+fi
+echo "gargoyle binary not found in $ROOT"
+echo "Build it with ./build.sh (requires Go)."
+EOF
+  chmod +x "$dest_root/start.sh" || true
+}
+
+write_build_sh() {
+  local dest_root="$1"
+  cat > "$dest_root/build.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+SRC="$ROOT/src/ctfvault"
+if [ ! -f "$SRC/go.mod" ]; then
+  echo "Source not found at $SRC"
+  echo "Copy source to $ROOT/src/ctfvault or re-run wizard with copy source."
+  exit 1
+fi
+if ! command -v go >/dev/null 2>&1; then
+  echo "Go not found. Install Go and retry."
+  exit 1
+fi
+(cd "$SRC" && go build -o "$ROOT/gargoyle" ./cmd/gargoyle && go build -o "$ROOT/gargoylectl" ./cmd/gargoylectl)
+echo "Build complete."
+EOF
+  chmod +x "$dest_root/build.sh" || true
 }
 
 pick_usb() {
@@ -327,7 +447,7 @@ require_cmd() {
 }
 
 apply_usb_layout() {
-  local dev="$1" system_size="$2" persist_size="$3" free_mb="$4" cluster_kb="$5"
+  local dev="$1" system_size="$2" persist_size="$3" free_mb="$4" cluster_kb="$5" gen_recovery="$6"
   require_cmd sgdisk
   require_cmd mkfs.ext4
   require_cmd mkfs.exfat
@@ -358,16 +478,53 @@ apply_usb_layout() {
   sudo mkfs.vfat -F32 "${dev}1"
   sudo mkfs.ext4 -L GARGOYLE_SYS "${dev}2"
 
-  sudo cryptsetup luksFormat "${dev}3"
-  sudo cryptsetup open "${dev}3" gargoyle_persist
+  local luks_pass=""
+  local luks_pass2=""
+  while true; do
+    read -rsp "Enter LUKS passphrase: " luks_pass
+    echo ""
+    read -rsp "Confirm LUKS passphrase: " luks_pass2
+    echo ""
+    if [ "$luks_pass" = "$luks_pass2" ] && [ -n "$luks_pass" ]; then
+      break
+    fi
+    echo "Passphrases do not match. Try again."
+  done
+
+  printf '%s' "$luks_pass" | sudo cryptsetup luksFormat --type luks2 --batch-mode --key-file - "${dev}3"
+  printf '%s' "$luks_pass" | sudo cryptsetup open "${dev}3" gargoyle_persist --key-file -
   sudo mkfs.ext4 -L GARGOYLE_PERSIST /dev/mapper/gargoyle_persist
 
   # exFAT cluster size: cluster_kb (default 512KB)
-  sudo mkfs.exfat -s "$cluster_sectors" -n GARGOYLE_SHARED "${dev}4" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}4"
+  local label="${usb_label:-GARGOYLE_SHARED}"
+  sudo mkfs.exfat -s "$cluster_sectors" -n "$label" "${dev}4" || sudo mkfs.exfat -n "$label" "${dev}4"
 
   sudo mkdir -p /mnt/gargoyle_persist
   sudo mount /dev/mapper/gargoyle_persist /mnt/gargoyle_persist
   sudo mkdir -p /mnt/gargoyle_persist/{data,downloads,logs,keys,shared}
+
+  if [ "$gen_recovery" = "yes" ]; then
+    local recovery_tmp
+    recovery_tmp=$(mktemp /tmp/gargoyle-recovery-XXXXXX.txt)
+    gen_recovery_codes "$recovery_tmp" 10 30 5
+    while IFS= read -r code; do
+      [ -z "$code" ] && continue
+      local keyfile
+      keyfile=$(mktemp /tmp/gargoyle-key-XXXXXX.txt)
+      printf '%s' "$code" > "$keyfile"
+      printf '%s' "$luks_pass" | sudo cryptsetup luksAddKey "${dev}3" "$keyfile" --key-file -
+      rm -f "$keyfile"
+    done < "$recovery_tmp"
+
+    sudo mkdir -p /mnt/gargoyle_shared
+    sudo mount "${dev}4" /mnt/gargoyle_shared
+    sudo mkdir -p /mnt/gargoyle_shared/gargoyle
+    sudo cp "$recovery_tmp" /mnt/gargoyle_shared/gargoyle/recovery_codes.txt
+    sudo chmod 600 /mnt/gargoyle_shared/gargoyle/recovery_codes.txt || true
+    sudo cp "$recovery_tmp" /mnt/gargoyle_persist/recovery_codes.txt
+    sudo chmod 600 /mnt/gargoyle_persist/recovery_codes.txt || true
+    rm -f "$recovery_tmp"
+  fi
 }
 
 apply_usb_shared_layout() {
@@ -393,7 +550,8 @@ apply_usb_shared_layout() {
 
   sudo sgdisk --zap-all "$dev"
   sudo sgdisk -n 1:0:${end} -t 1:0700 -c 1:GARGOYLE_SHARED "$dev"
-  sudo mkfs.exfat -s "$cluster_sectors" -n GARGOYLE_SHARED "${dev}1" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}1"
+  local label="${usb_label:-GARGOYLE_SHARED}"
+  sudo mkfs.exfat -s "$cluster_sectors" -n "$label" "${dev}1" || sudo mkfs.exfat -n "$label" "${dev}1"
 
   sudo mkdir -p /mnt/gargoyle_shared
   sudo mount "${dev}1" /mnt/gargoyle_shared
@@ -467,7 +625,7 @@ EOF
     ctf-ultimate)
       cat > "$path" <<'EOF'
 pack: ctf-ultimate
-description: "Полный набор для CTF: Web, Pwn, Rev, Crypto, Forensics"
+description: "Full CTF pack: Web, Pwn, Rev, Crypto, Forensics"
 tools:
   - name: nikto
     install: "apt:nikto"
@@ -601,6 +759,16 @@ main() {
   fi
   local ram_only
   ram_only=$(prompt_yesno "RAM-only session (no disk writes)?" "no")
+  local auto_wipe_remove
+  auto_wipe_remove=$(prompt_yesno "Auto wipe on USB removal?" "$([ "$op_mode" = "fullanon" ] && echo yes || echo no)")
+  local auto_wipe_exit
+  auto_wipe_exit=$(prompt_yesno "Auto wipe on exit?" "$([ "$op_mode" = "fullanon" ] && echo yes || echo no)")
+  local gen_recovery
+  gen_recovery=$(prompt_yesno "Generate recovery codes file (USB only recommended)?" "$([ "$target" = "USB" ] && echo yes || echo no)")
+  if [ "$target" = "Folder" ] && [ "$gen_recovery" = "yes" ]; then
+    echo "NOTE: recovery codes are intended for USB installs. Disabling for folder target."
+    gen_recovery="no"
+  fi
 
   local net_mode vpn_type vpn_profile gateway_ip tor_install tor_strict
   vpn_type=""
@@ -697,9 +865,12 @@ main() {
   local ui_theme="dark"
   local ui_boss_key="yes"
   local ui_boss_mode="update"
+  local usb_label="GARGOYLE_SHARED"
   local tools_file="tools.yaml"
   local tools_auto="no"
   local tools_repo=""
+  local copy_source="yes"
+  local auto_build="yes"
   local update_url=""
   local update_channel="stable"
   local update_public_key=""
@@ -801,6 +972,9 @@ main() {
     ui_theme=$(prompt_menu "UI theme" "dark" "light")
     ui_boss_key=$(prompt_yesno "Boss-key enabled?" "$ui_boss_key")
     ui_boss_mode=$(prompt_menu "Boss mode" "update" "htop" "blank")
+    copy_source=$(prompt_yesno "Copy Gargoyle source to USB (offline build)?" "$copy_source")
+    auto_build=$(prompt_yesno "Build gargoyle now (if Go installed)?" "$auto_build")
+    usb_label=$(prompt_input "USB volume label (default $usb_label)" "$usb_label")
     tools_file=$(prompt_input "Tools pack file" "$tools_file")
     tools_auto=$(prompt_yesno "Auto install tools?" "$tools_auto")
     tools_repo=$(prompt_input "Tools repository URL (optional)" "$tools_repo")
@@ -862,7 +1036,16 @@ main() {
         ;;
     esac
     mkdir -p "$folder"/{data,downloads,logs,keys,shared}
-    write_config "$folder/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+    if [ "$copy_source" = "yes" ]; then
+      copy_source "$folder"
+    fi
+    if [ "$auto_build" = "yes" ]; then
+      build_binaries "$folder"
+    fi
+    copy_binaries "$folder"
+    write_start_sh "$folder"
+    write_build_sh "$folder"
+    write_config "$folder/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$auto_wipe_remove" "$auto_wipe_exit" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
     if [[ "$tools_file" == tools/packs/* ]]; then
       pack_name=$(basename "$tools_file" .yaml)
       write_pack_file "$folder" "$pack_name"
@@ -903,12 +1086,24 @@ main() {
         ;;
     esac
     apply_usb_shared_layout "$dev" "$free_space" "$cluster_kb"
-    write_config "/mnt/gargoyle_shared/gargoyle/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+    if [ "$copy_source" = "yes" ]; then
+      copy_source "/mnt/gargoyle_shared/gargoyle"
+    fi
+    if [ "$auto_build" = "yes" ]; then
+      build_binaries "/mnt/gargoyle_shared/gargoyle"
+    fi
+    copy_binaries "/mnt/gargoyle_shared/gargoyle"
+    write_start_sh "/mnt/gargoyle_shared/gargoyle"
+    write_build_sh "/mnt/gargoyle_shared/gargoyle"
+    write_config "/mnt/gargoyle_shared/gargoyle/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$auto_wipe_remove" "$auto_wipe_exit" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
     if [[ "$tools_file" == tools/packs/* ]]; then
       pack_name=$(basename "$tools_file" .yaml)
       write_pack_file "/mnt/gargoyle_shared/gargoyle" "$pack_name"
     fi
     gen_identity_key "/mnt/gargoyle_shared/gargoyle/keys/identity.key"
+    if [ "$gen_recovery" = "yes" ]; then
+      gen_recovery_codes "/mnt/gargoyle_shared/gargoyle/recovery_codes.txt" 10 30 5
+    fi
     if [ "$install_scripts" = "yes" ]; then
       write_sample_script "/mnt/gargoyle_shared/gargoyle/scripts/sample.gsl"
     fi
@@ -932,9 +1127,19 @@ main() {
       exit 1
       ;;
   esac
-  apply_usb_layout "$dev" "$system_size" "$persist_size" "$free_space" "$cluster_kb"
+  apply_usb_layout "$dev" "$system_size" "$persist_size" "$free_space" "$cluster_kb" "$gen_recovery"
 
-  write_config "/mnt/gargoyle_persist/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+  if [ "$copy_source" = "yes" ]; then
+    copy_source "/mnt/gargoyle_persist"
+  fi
+  if [ "$auto_build" = "yes" ]; then
+    build_binaries "/mnt/gargoyle_persist"
+  fi
+  copy_binaries "/mnt/gargoyle_persist"
+  write_start_sh "/mnt/gargoyle_persist"
+  write_build_sh "/mnt/gargoyle_persist"
+
+  write_config "/mnt/gargoyle_persist/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$auto_wipe_remove" "$auto_wipe_exit" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
   if [[ "$tools_file" == tools/packs/* ]]; then
     pack_name=$(basename "$tools_file" .yaml)
     write_pack_file "/mnt/gargoyle_persist" "$pack_name"

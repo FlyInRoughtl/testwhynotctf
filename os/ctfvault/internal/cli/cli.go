@@ -1968,6 +1968,8 @@ func applyFullAnon(cfg config.Config) config.Config {
 	cfg.Mesh.Transport = "tls"
 	cfg.Storage.USBEnabled = false
 	cfg.Storage.USBReadOnly = true
+	cfg.Storage.AutoWipeOnRemove = true
+	cfg.Storage.AutoWipeOnExit = true
 	return cfg
 }
 
