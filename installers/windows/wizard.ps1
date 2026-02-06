@@ -2,6 +2,7 @@
 $ErrorActionPreference = "Stop"
 
 $logPath = Join-Path (Get-Location) "installer.log"
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\\..")
 try {
     Start-Transcript -Path $logPath -Append | Out-Null
 } catch {
@@ -147,6 +148,41 @@ sleep 500
 print "Relay running"
 # Example mesh send: mesh.send <src> <dst> <target> <psk> [depth]
 # mesh.send ./file.txt file.txt 127.0.0.1:19999 secret 3
+"@ | Set-Content -Path $path -Encoding ascii
+}
+
+function Copy-Binaries($destRoot) {
+    $candidates = @(
+        (Join-Path $repoRoot "gargoyle.exe"),
+        (Join-Path $repoRoot "gargoylectl.exe"),
+        (Join-Path $repoRoot "os\\ctfvault\\gargoyle.exe"),
+        (Join-Path $repoRoot "os\\ctfvault\\gargoylectl.exe")
+    )
+    foreach ($bin in $candidates) {
+        if (Test-Path $bin) {
+            try {
+                Copy-Item -Force $bin $destRoot
+            } catch {
+                Write-Host "WARN: failed to copy $bin -> $destRoot : $_" -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function Write-StartCmd($destRoot) {
+    $path = Join-Path $destRoot "start.cmd"
+    @"
+@echo off
+set GARGOYLE_HOME=%~dp0
+cd /d %~dp0
+if exist gargoyle.exe (
+  gargoyle.exe start --tui --home %~dp0
+) else (
+  echo gargoyle.exe not found in this folder.
+  echo Build it from the repo or copy gargoyle.exe here.
+  echo Example: go build -o %~dp0gargoyle.exe .\\cmd\\gargoyle
+)
+pause
 "@ | Set-Content -Path $path -Encoding ascii
 }
 
@@ -769,6 +805,8 @@ if ($target -like "Folder*") {
     foreach ($dir in @("data","downloads","logs","keys","shared")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
     }
+    Copy-Binaries $homeRoot
+    Write-StartCmd $homeRoot
     Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
     if ($toolsFile -like "tools\\packs\\*") {
         $pack = [System.IO.Path]::GetFileNameWithoutExtension($toolsFile)
@@ -838,6 +876,8 @@ if ($drive) {
     foreach ($dir in @("data","downloads","logs","keys","shared","scripts")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $homeRoot $dir) | Out-Null
     }
+    Copy-Binaries $homeRoot
+    Write-StartCmd $homeRoot
     Write-Config (Join-Path $homeRoot "gargoyle.yaml") $edition $opMode $locale $ramLimit $cpuLimit $dnsProfile $dnsCustom $wifi $bt $ports $usbEnabled $usbReadOnly $ramOnly $netMode $vpnType $vpnProfile $gatewayIP $proxyEngine $proxyConfig $torInstall $torStrict $torTransPort $torDnsPort $torUseBridges $torTransport $torBridgeLines $torrcPath $macSpoof $meshOnion $meshDiscovery $meshDiscoveryPort $meshDiscoveryKey $meshAutoJoin $meshChat $meshChatListen $meshChatPSK $meshChatPSKFile $meshClipboard $meshClipboardWarn $meshTunEnabled $meshTunDevice $meshTunCIDR $meshTunPeerCIDR $meshPadding $meshTransport $meshMetadata $meshOnionDepth $meshRelayAllowlist $hotspotSSID $hotspotPassword $hotspotIfname $hotspotShared $emulatePrivacy $emulateTemp $emulateDownloads $emulateDisplay $tunnelType $tunnelServer $tunnelToken $tunnelLocalIP $mailMode $mailSink $mailLocal $mailSinkListen $mailSinkUI $mailMeshEnabled $mailMeshListen $mailMeshPSK $mailMeshPSKFile $uiTheme $uiBossKey $uiBossMode $toolsFile $toolsAuto $toolsRepo $updateUrl $updateChannel $updatePublicKey $updateAuto $syncEnabled $syncTarget $syncDir $syncPSK $syncPSKFile $syncTransport $syncPadding $syncDepth $telegramEnabled $telegramBotToken $telegramAllowedUser $telegramPairingTTL $telegramAllowCLI $telegramAllowWipe $telegramAllowStats $dohUrl $dohListen
     if ($toolsFile -like "tools\\packs\\*") {
         $pack = [System.IO.Path]::GetFileNameWithoutExtension($toolsFile)
