@@ -1,0 +1,11 @@
+[Unit]
+Description=Gargoyle RAM wipe on shutdown
+DefaultDependencies=no
+Before=shutdown.target reboot.target halt.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gargoyle-ramwipe
+
+[Install]
+WantedBy=shutdown.target reboot.target halt.target

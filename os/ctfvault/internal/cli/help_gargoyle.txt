@@ -8,13 +8,20 @@
 
 Основные команды
 - start | stop | status | init
-- mesh send|recv|chat|clipboard|discover|advertise|tun|gateway
+- mesh send|recv|hydra-send|hydra-recv|chat|clipboard|discover|advertise|tun|gateway
 - relay | hub | tunnel | mail | proxy | hotspot
 - emulate run|stop|status (Linux) [--no-privacy|--host]
 - tools list|install|edit
 - install pack-<name> [--repo URL]
-- doctor | update | telegram | profile | wipe | harden
-  update: --sha256 <sum> --sig <sig_b64> --pub <pub_b64>
+- doctor | update | mask | telegram | profile | wipe | harden
+  doctor: --deep
+  update: --sha256 <sum> --sig <sig_b64> --pub <pub_b64> --ram
+  mask: --mode update|bios|blank|htop
+
+HYDRA (mesh)
+- gargoyle mesh hydra-send ./file.txt --targets host1:19999,host2:19999 --security --psk secret --mode direct
+- gargoyle mesh hydra-send ./file.txt --targets host1:19999 --mimic --mimic-peer peer:19999
+- gargoyle mesh hydra-recv --listen :19999 --out ./downloads --psk secret
 
 Tools packs
 Встроенные: ctf, ctf_emulate, anonymity, osint, empty, ctf-ultimate

@@ -1,0 +1,12 @@
+[Unit]
+Description=Gargoyle MAC spoof (FullAnon)
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gargoyle-macspoof
+
+[Install]
+WantedBy=network-pre.target

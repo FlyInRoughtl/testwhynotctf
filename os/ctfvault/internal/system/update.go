@@ -35,38 +35,8 @@ func UpdateBinary(opts UpdateOptions) (string, error) {
 	}
 	dir := filepath.Dir(exe)
 	tmpFile := filepath.Join(dir, "gargoyle.update.tmp")
-	out, err := os.Create(tmpFile)
-	if err != nil {
+	if err := downloadAndVerify(tmpFile, opts); err != nil {
 		return "", err
-	}
-	defer out.Close()
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, opts.URL, nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", errors.New("update download failed: " + resp.Status)
-	}
-
-	h := sha256.New()
-	if _, err := io.Copy(io.MultiWriter(out, h), resp.Body); err != nil {
-		return "", err
-	}
-	sum := hex.EncodeToString(h.Sum(nil))
-	if opts.SHA256 != "" && opts.SHA256 != sum {
-		return "", errors.New("sha256 mismatch")
-	}
-	if opts.Signature != "" {
-		if err := verifySignature(h.Sum(nil), opts.Signature, opts.PublicKey); err != nil {
-			return "", err
-		}
 	}
 
 	if runtime.GOOS == "windows" {
@@ -108,6 +78,57 @@ del "%%~f0"
 		return "", err
 	}
 	return exe, nil
+}
+
+func UpdateBinaryRAM(opts UpdateOptions) (string, error) {
+	if opts.URL == "" {
+		return "", errors.New("update url is empty")
+	}
+	tmpFile := filepath.Join(os.TempDir(), fmt.Sprintf("gargoyle.update.%d", time.Now().UnixNano()))
+	if err := downloadAndVerify(tmpFile, opts); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(tmpFile, 0700); err != nil {
+		return "", err
+	}
+	return tmpFile, nil
+}
+
+func downloadAndVerify(path string, opts UpdateOptions) error {
+	out, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, opts.URL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return errors.New("update download failed: " + resp.Status)
+	}
+
+	h := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(out, h), resp.Body); err != nil {
+		return err
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if opts.SHA256 != "" && opts.SHA256 != sum {
+		return errors.New("sha256 mismatch")
+	}
+	if opts.Signature != "" {
+		if err := verifySignature(h.Sum(nil), opts.Signature, opts.PublicKey); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func verifySignature(hash []byte, sigText string, pubText string) error {

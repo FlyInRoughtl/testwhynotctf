@@ -1,0 +1,18 @@
+[Unit]
+Description=Gargoyle TUI
+After=network-online.target gargoyle-bootmode.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=GARGOYLE_HOME=/home/user/.gargoyle
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+ExecStart=/usr/local/bin/gargoyle-launch
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

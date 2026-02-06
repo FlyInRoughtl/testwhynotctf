@@ -72,6 +72,7 @@ type NetworkConfig struct {
 
 type SecurityConfig struct {
 	IdentityKeyPath string `yaml:"identity_key_path"`
+	IdentityBits    int    `yaml:"identity_bits"`
 	IdentityLength  int    `yaml:"identity_length"`
 	IdentityGroup   int    `yaml:"identity_group"`
 }
@@ -92,6 +93,10 @@ type MeshConfig struct {
 	ChatPSKFile      string        `yaml:"chat_psk_file"`
 	ClipboardShare   bool          `yaml:"clipboard_share"`
 	ClipboardWarn    bool          `yaml:"clipboard_warn"`
+	HydraEnabled     bool          `yaml:"hydra_enabled"`
+	HydraNoise       bool          `yaml:"hydra_noise"`
+	HydraMode        string        `yaml:"hydra_mode"`
+	MimicPeer        string        `yaml:"mimic_peer"`
 	TunEnabled       bool          `yaml:"tun_enabled"`
 	TunDevice        string        `yaml:"tun_device"`
 	TunCIDR          string        `yaml:"tun_cidr"`
@@ -102,6 +107,7 @@ type MeshConfig struct {
 }
 
 type EmulateConfig struct {
+	Mode          string `yaml:"mode"`
 	PrivacyMode   bool   `yaml:"privacy_mode"`
 	TempDir       string `yaml:"temp_dir"`
 	DownloadsDir  string `yaml:"downloads_dir"`
@@ -228,8 +234,9 @@ func DefaultConfig() Config {
 		},
 		Security: SecurityConfig{
 			IdentityKeyPath: "keys/identity.key",
-			IdentityLength:  256,
-			IdentityGroup:   15,
+			IdentityBits:    256,
+			IdentityLength:  0,
+			IdentityGroup:   5,
 		},
 		Mesh: MeshConfig{
 			RelayURL:         "",
@@ -247,6 +254,10 @@ func DefaultConfig() Config {
 			ChatPSKFile:      "",
 			ClipboardShare:   false,
 			ClipboardWarn:    true,
+			HydraEnabled:     false,
+			HydraNoise:       false,
+			HydraMode:        "direct",
+			MimicPeer:        "",
 			TunEnabled:       false,
 			TunDevice:        "gargoyle0",
 			TunCIDR:          "10.42.0.1/24",
@@ -261,6 +272,7 @@ func DefaultConfig() Config {
 			},
 		},
 		Emulate: EmulateConfig{
+			Mode:          "tor",
 			PrivacyMode:   true,
 			TempDir:       "ram",
 			DownloadsDir:  "downloads",
@@ -437,6 +449,11 @@ func validate(cfg Config) error {
 	default:
 		return errors.New("emulate.display_server must be direct|cage|gamescope|weston")
 	}
+	switch cfg.Emulate.Mode {
+	case "", "tor", "silent", "amnesic", "host":
+	default:
+		return errors.New("emulate.mode must be tor|silent|amnesic|host")
+	}
 	switch cfg.Tunnel.Type {
 	case "", "frp", "relay", "wss":
 	default:
@@ -465,10 +482,17 @@ func validate(cfg Config) error {
 	if strings.ContainsAny(cfg.Tools.Repository, "\r\n") {
 		return errors.New("tools.repository contains invalid characters")
 	}
-	if cfg.Security.IdentityLength != 256 {
-		return errors.New("security.identity_length must be 256")
+	identityBits := cfg.Security.IdentityBits
+	if identityBits == 0 {
+		identityBits = cfg.Security.IdentityLength
 	}
-	if cfg.Security.IdentityGroup <= 0 || cfg.Security.IdentityGroup > cfg.Security.IdentityLength {
+	if identityBits == 0 {
+		identityBits = 256
+	}
+	if identityBits != 256 {
+		return errors.New("security.identity_bits must be 256")
+	}
+	if cfg.Security.IdentityGroup <= 0 || cfg.Security.IdentityGroup > 64 {
 		return errors.New("security.identity_group must be in range")
 	}
 	if cfg.Network.DNSProfile == "" {
@@ -495,6 +519,11 @@ func validate(cfg Config) error {
 	default:
 		return errors.New("network.vpn_type must be openvpn|wireguard")
 	}
+	switch cfg.Mesh.HydraMode {
+	case "", "direct", "vortex", "obsidian":
+	default:
+		return errors.New("mesh.hydra_mode must be direct|vortex|obsidian")
+	}
 	switch cfg.Network.ProxyEngine {
 	case "", "sing-box", "xray", "hiddify":
 	default:
@@ -520,11 +549,11 @@ func validate(cfg Config) error {
 		}
 	}
 	if cfg.UI.BossMode != "" {
-		switch cfg.UI.BossMode {
-		case "update", "htop", "blank":
-		default:
-			return errors.New("ui.boss_mode must be update|htop|blank")
-		}
+	switch cfg.UI.BossMode {
+	case "update", "htop", "blank", "bios":
+	default:
+		return errors.New("ui.boss_mode must be update|htop|blank|bios")
+	}
 	}
 	for profile, actions := range cfg.UI.QuickActions {
 		_ = profile

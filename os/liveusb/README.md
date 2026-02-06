@@ -1,23 +1,22 @@
-# Gargoyle Live-USB (Linux)
+# Gargoyle Live-OS (Linux)
 
-Этот каталог содержит **best-effort** сборочный пайплайн Live-USB.
-Цель: собрать ISO образ с squashfs rootfs + опцией `toram`.
+This folder contains the Live-OS build pipeline (Debian Bookworm).
+Goal: build an ISO (squashfs rootfs) with toram support.
 
-## Требования (Debian/Ubuntu)
-- live-build (`apt install live-build`)
+## Requirements (Debian/Ubuntu)
+- live-build
+- debootstrap
 - squashfs-tools
 - xorriso
 - grub-efi-amd64-bin
+- shim-signed
 
-## Быстрый старт
-```bash
+## Build
+```
 cd os/liveusb
 ./build.sh
 ```
 
-## Toram
-Параметр ядра `toram` копирует squashfs в RAM и позволяет выдернуть USB.
-
-## Примечание
-Это **скелет** для сборки. Вы можете заменить базовую систему на Kali,
-или использовать свой список пакетов и overlay.
+## Notes
+- ISO is built into os/liveusb/build/.
+- toram copies the rootfs to RAM, USB can be removed.

@@ -121,6 +121,7 @@ type Status struct {
 
 func buildEnv(cfg config.EmulateConfig, home string) ([]string, string, error) {
 	env := os.Environ()
+	mode := normalizeMode(cfg.Mode)
 	if home != "" {
 		env = append(env, "HOME="+home)
 		env = append(env, "XDG_DATA_HOME="+filepath.Join(home, "data"))
@@ -135,6 +136,11 @@ func buildEnv(cfg config.EmulateConfig, home string) ([]string, string, error) {
 		env = append(env, "QT_QPA_PLATFORM=wayland")
 		env = append(env, "MOZ_ENABLE_WAYLAND=1")
 		env = append(env, "SDL_VIDEODRIVER=wayland")
+	}
+	if mode == "tor" {
+		env = append(env, "http_proxy=socks5h://127.0.0.1:9050")
+		env = append(env, "https_proxy=socks5h://127.0.0.1:9050")
+		env = append(env, "all_proxy=socks5h://127.0.0.1:9050")
 	}
 
 	var tmpDir string
@@ -178,6 +184,9 @@ func buildCommand(path string, args []string, cfg config.EmulateConfig, home str
 		return cmd, "", nil
 	}
 
+	mode := normalizeMode(cfg.Mode)
+	args = decorateArgsForMode(path, args, mode)
+
 	wrapperCmd, wrapperArgs, warn := buildDisplayWrapper(cfg.DisplayServer, path, args)
 	if wrapperCmd != "" {
 		cmd := exec.Command(wrapperCmd, wrapperArgs...)
@@ -208,7 +217,6 @@ func buildCommand(path string, args []string, cfg config.EmulateConfig, home str
 		"--unshare-pid",
 		"--unshare-uts",
 		"--unshare-ipc",
-		"--share-net",
 		"--die-with-parent",
 		"--ro-bind", "/", "/",
 		"--dev", "/dev",
@@ -217,8 +225,13 @@ func buildCommand(path string, args []string, cfg config.EmulateConfig, home str
 		"--bind", sandboxHome, "/home/gargoyle",
 		"--setenv", "HOME", "/home/gargoyle",
 	}
+	if mode == "silent" {
+		bwrapArgs = append(bwrapArgs, "--unshare-net")
+	} else {
+		bwrapArgs = append(bwrapArgs, "--share-net")
+	}
 
-	if home != "" {
+	if home != "" && mode != "amnesic" && mode != "silent" {
 		downloads := filepath.Join(home, cfg.DownloadsDir)
 		dataDir := filepath.Join(home, "data")
 		sharedDir := filepath.Join(home, "shared")
@@ -240,6 +253,34 @@ func buildCommand(path string, args []string, cfg config.EmulateConfig, home str
 	cmd := exec.Command(bwrap, bwrapArgs...)
 	cmd.Env = env
 	return cmd, "", nil
+}
+
+func normalizeMode(mode string) string {
+	switch mode {
+	case "silent", "amnesic", "host":
+		return mode
+	default:
+		return "tor"
+	}
+}
+
+func decorateArgsForMode(path string, args []string, mode string) []string {
+	if mode == "host" {
+		return args
+	}
+	base := filepath.Base(path)
+	switch base {
+	case "firefox", "firefox-esr", "torbrowser-launcher":
+		class := "GargoyleTor"
+		if mode == "silent" {
+			class = "GargoyleSilent"
+		} else if mode == "amnesic" {
+			class = "GargoyleAmnesic"
+		}
+		return append([]string{"--class", class}, args...)
+	default:
+		return args
+	}
 }
 
 func buildDisplayWrapper(display string, app string, args []string) (string, []string, string) {

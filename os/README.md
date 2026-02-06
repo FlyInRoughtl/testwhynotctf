@@ -1,4 +1,5 @@
 ﻿# os/
 
-Заготовки для Live‑OS. Pipeline отложен до v5+.
-Текущий рабочий код — в `os/ctfvault` (CLI/TUI на хост‑ОС).
+Live‑OS pipeline (v5) на Debian Bookworm.
+Сборка: `os/liveusb/build.sh`
+CLI/TUI код: `os/ctfvault`

@@ -40,7 +40,14 @@ func EnsureHome(cfg config.Config) (string, string, error) {
 	}
 
 	identityPath := paths.ResolveInHome(homeDir, cfg.Security.IdentityKeyPath)
-	if _, err := security.EnsureIdentityKey(identityPath, cfg.Security.IdentityLength, cfg.Security.IdentityGroup); err != nil {
+	bits := cfg.Security.IdentityBits
+	if bits == 0 {
+		bits = cfg.Security.IdentityLength
+	}
+	if bits == 0 {
+		bits = 256
+	}
+	if _, err := security.EnsureIdentityKey(identityPath, bits, cfg.Security.IdentityGroup); err != nil {
 		return "", "", err
 	}
 

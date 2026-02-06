@@ -150,9 +150,11 @@ func Run(app string, args []string) int {
 	case "harden":
 		return runHarden(logger, remaining[1:])
 	case "doctor":
-		return runDoctor(logger, cfg)
+		return runDoctor(logger, cfg, remaining[1:])
 	case "update":
 		return runUpdate(logger, cfg, remaining[1:])
+	case "mask":
+		return runMask(logger, cfg, remaining[1:])
 	case "telegram":
 		return runTelegram(logger, cfg, svc, resolvedConfigPath, remaining[1:])
 	case "gateway":
@@ -212,7 +214,7 @@ func reorderGlobalFlags(args []string) []string {
 
 func runMesh(logger *log.Logger, cfg config.Config, svc *services.Manager, args []string) int {
 	if len(args) == 0 {
-		fmt.Println("mesh: expected subcommand (up|send|recv|status|discover|advertise|chat|clipboard|tun|gateway)")
+		fmt.Println("mesh: expected subcommand (up|send|recv|hydra-send|hydra-recv|status|discover|advertise|chat|clipboard|tun|gateway)")
 		return 2
 	}
 	switch args[0] {
@@ -235,6 +237,10 @@ func runMesh(logger *log.Logger, cfg config.Config, svc *services.Manager, args 
 		return runMeshSend(logger, cfg, args[1:])
 	case "recv":
 		return runMeshRecv(logger, cfg, args[1:])
+	case "hydra-send":
+		return runMeshHydraSend(logger, cfg, args[1:])
+	case "hydra-recv":
+		return runMeshHydraRecv(logger, cfg, args[1:])
 	case "discover":
 		return runMeshDiscover(logger, cfg, args[1:])
 	case "advertise":
@@ -248,7 +254,7 @@ func runMesh(logger *log.Logger, cfg config.Config, svc *services.Manager, args 
 	case "gateway":
 		return runMeshGateway(logger, cfg, args[1:])
 	default:
-		fmt.Println("mesh: expected subcommand (up|send|recv|status|discover|advertise|chat|clipboard|tun|gateway)")
+		fmt.Println("mesh: expected subcommand (up|send|recv|hydra-send|hydra-recv|status|discover|advertise|chat|clipboard|tun|gateway)")
 		return 2
 	}
 }
@@ -302,7 +308,14 @@ func runInit(logger *log.Logger, configPath string, args []string) int {
 	}
 
 	identityPath := paths.ResolveInHome(homeDir, cfg.Security.IdentityKeyPath)
-	if _, err := security.EnsureIdentityKey(identityPath, cfg.Security.IdentityLength, cfg.Security.IdentityGroup); err != nil {
+	bits := cfg.Security.IdentityBits
+	if bits == 0 {
+		bits = cfg.Security.IdentityLength
+	}
+	if bits == 0 {
+		bits = 256
+	}
+	if _, err := security.EnsureIdentityKey(identityPath, bits, cfg.Security.IdentityGroup); err != nil {
 		logger.Printf("init: %v", err)
 		return 1
 	}
@@ -434,6 +447,106 @@ func runMeshRecv(logger *log.Logger, cfg config.Config, args []string) int {
 
 	logger.Printf("mesh recv: saved to %s", outPath)
 	return 0
+}
+
+func runMeshHydraSend(logger *log.Logger, cfg config.Config, args []string) int {
+	fs := flag.NewFlagSet("mesh hydra-send", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	targets := fs.String("targets", "", "comma-separated targets host:port")
+	security := fs.Bool("security", true, "enable encryption")
+	psk := fs.String("psk", "", "pre-shared key")
+	pskFile := fs.String("psk-file", "", "psk file")
+	chunkSize := fs.Int("chunk", 256*1024, "chunk size")
+	noise := fs.Int("noise", 0, "number of noise packets")
+	mode := fs.String("mode", cfg.Mesh.HydraMode, "direct|vortex|obsidian")
+	mimic := fs.Bool("mimic", false, "use peer as exit (override targets)")
+	mimicPeer := fs.String("mimic-peer", cfg.Mesh.MimicPeer, "peer to use as exit")
+	relayChain := fs.String("relay-chain", "", "relay chain (for vortex)")
+	route := fs.String("route", "onion", "route mode (onion)")
+	token := fs.String("token", "", "relay token")
+	transport := fs.String("transport", cfg.Mesh.Transport, "tcp|tls")
+	padding := fs.Int("padding", cfg.Mesh.PaddingBytes, "padding bytes")
+	depth := fs.Int("depth", cfg.Mesh.OnionDepth, "encryption depth")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	rest := fs.Args()
+	if len(rest) < 1 {
+		fmt.Println("mesh hydra-send: usage: hydra-send <file> --targets host:port[,host:port]")
+		return 2
+	}
+	targetList := splitList(*targets)
+	if len(targetList) == 0 {
+		fmt.Println("mesh hydra-send: --targets is required")
+		return 2
+	}
+	opts := mesh.HydraSendOptions{
+		Targets:      targetList,
+		Transport:    *transport,
+		PSK:          *psk,
+		PSKFile:      *pskFile,
+		Security:     *security,
+		Depth:        *depth,
+		ChunkSize:    *chunkSize,
+		PaddingBytes: *padding,
+		NoisePackets: *noise,
+		Mode:         *mode,
+		Mimic:        *mimic,
+		MimicPeer:    *mimicPeer,
+		RelayChain:   *relayChain,
+		Route:        *route,
+		Token:        *token,
+	}
+	if cfg.Mesh.HydraNoise && opts.NoisePackets == 0 {
+		opts.NoisePackets = 3
+	}
+	if err := mesh.HydraSend(context.Background(), rest[0], "", opts); err != nil {
+		logger.Printf("mesh hydra-send: %v", err)
+		return 1
+	}
+	logger.Println("mesh hydra-send: ok")
+	return 0
+}
+
+func runMeshHydraRecv(logger *log.Logger, cfg config.Config, args []string) int {
+	fs := flag.NewFlagSet("mesh hydra-recv", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	listen := fs.String("listen", ":19999", "listen address")
+	outDir := fs.String("out", "./downloads", "output directory")
+	psk := fs.String("psk", "", "pre-shared key")
+	pskFile := fs.String("psk-file", "", "psk file")
+	transport := fs.String("transport", cfg.Mesh.Transport, "tcp|tls")
+	timeout := fs.Duration("timeout", 30*time.Second, "timeout")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	opts := mesh.HydraReceiveOptions{
+		Listen:    *listen,
+		OutDir:    *outDir,
+		PSK:       *psk,
+		PSKFile:   *pskFile,
+		Transport: *transport,
+		Timeout:   *timeout,
+	}
+	path, err := mesh.HydraReceive(context.Background(), opts)
+	if err != nil {
+		logger.Printf("mesh hydra-recv: %v", err)
+		return 1
+	}
+	logger.Printf("mesh hydra-recv: saved %s", path)
+	return 0
+}
+
+func splitList(value string) []string {
+	var out []string
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out
 }
 
 func runMeshDiscover(logger *log.Logger, cfg config.Config, args []string) int {
@@ -828,6 +941,7 @@ func runEmulate(logger *log.Logger, cfg config.Config, svc *services.Manager, ar
 		fs.SetOutput(os.Stdout)
 		noPrivacy := fs.Bool("no-privacy", false, "disable privacy mode (use host profile)")
 		hostMode := fs.Bool("host", false, "alias for --no-privacy")
+		mode := fs.String("mode", cfg.Emulate.Mode, "tor|silent|amnesic|host")
 		if err := fs.Parse(args[1:]); err != nil {
 			return 2
 		}
@@ -849,6 +963,13 @@ func runEmulate(logger *log.Logger, cfg config.Config, svc *services.Manager, ar
 		emulateCfg := cfg.Emulate
 		if *noPrivacy || *hostMode {
 			emulateCfg.PrivacyMode = false
+			emulateCfg.Mode = "host"
+		}
+		if *mode != "" {
+			emulateCfg.Mode = *mode
+			if *mode == "host" {
+				emulateCfg.PrivacyMode = false
+			}
 		}
 		if err := svc.StartEmulate(app, appArgs, emulateCfg, home); err != nil {
 			logger.Printf("emulate: %v", err)
@@ -1401,8 +1522,19 @@ func loadToolsPack(home, defaultPath, pack string) (tools.Pack, error) {
 	return tools.Load(path)
 }
 
-func runDoctor(logger *log.Logger, cfg config.Config) int {
-	results := system.RunDoctor(cfg)
+func runDoctor(logger *log.Logger, cfg config.Config, args []string) int {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	deep := fs.Bool("deep", false, "run extended checks")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	var results []system.CheckResult
+	if *deep {
+		results = system.RunDoctorDeep(cfg)
+	} else {
+		results = system.RunDoctor(cfg)
+	}
 	fmt.Print(system.FormatDoctor(results))
 	return 0
 }
@@ -1584,25 +1716,81 @@ func runUpdate(logger *log.Logger, cfg config.Config, args []string) int {
 	sum := fs.String("sha256", "", "expected sha256 (optional)")
 	sig := fs.String("sig", "", "signature (base64/hex of sha256)")
 	pub := fs.String("pub", cfg.Update.PublicKey, "public key (base64/hex)")
+	ram := fs.Bool("ram", false, "download update to temp and run without replacing on disk")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	path, err := system.UpdateBinary(system.UpdateOptions{
+	opts := system.UpdateOptions{
 		URL:       *url,
 		SHA256:    *sum,
 		Signature: *sig,
 		PublicKey: *pub,
-	})
+	}
+	var path string
+	var err error
+	if *ram && runtime.GOOS == "linux" {
+		path, err = system.UpdateBinaryRAM(opts)
+	} else {
+		path, err = system.UpdateBinary(opts)
+	}
 	if err != nil {
 		logger.Printf("update: %v", err)
 		return 1
 	}
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" && !*ram {
 		logger.Printf("update: scheduled, helper launched (%s)", path)
 		return 0
 	}
-	logger.Printf("update: installed at %s", path)
+	if *ram {
+		logger.Printf("update: staged in RAM at %s", path)
+	} else {
+		logger.Printf("update: installed at %s", path)
+	}
 	return 0
+}
+
+func runMask(logger *log.Logger, cfg config.Config, args []string) int {
+	fs := flag.NewFlagSet("mask", flag.ContinueOnError)
+	fs.SetOutput(os.Stdout)
+	mode := fs.String("mode", cfg.UI.BossMode, "update|bios|blank|htop")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	switch *mode {
+	case "update", "bios", "blank", "htop":
+	default:
+		logger.Printf("mask: invalid mode %q", *mode)
+		return 2
+	}
+	fmt.Println(renderMask(*mode))
+	_, _ = fmt.Fscanln(os.Stdin)
+	return 0
+}
+
+func renderMask(mode string) string {
+	switch mode {
+	case "blank":
+		return ""
+	case "htop":
+		return "top - 22:10:15 up  2:41,  1 user,  load average: 0.12, 0.09, 0.08\n\n" +
+			"Tasks: 109 total,   1 running, 108 sleeping,   0 stopped,   0 zombie\n" +
+			"%Cpu(s):  2.1 us,  1.0 sy,  0.0 ni, 96.5 id,  0.3 wa,  0.0 hi,  0.1 si,  0.0 st\n" +
+			"MiB Mem :   7800.0 total,   6211.5 free,    999.2 used,    589.3 buff/cache\n" +
+			"MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   6400.0 avail Mem\n\n" +
+			"  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND\n" +
+			"  972 root      20   0  102932   9876   8420 S   0.7  0.1   0:01.23 NetworkManager\n" +
+			" 1442 user      20   0  318400  30500  22000 S   1.3  0.4   0:12.88 gnome-shell\n"
+	case "bios":
+		return "UEFI Firmware Settings\n\n" +
+			"CPU: Intel(R) Core(TM) i7\n" +
+			"Memory: 8192 MB\n" +
+			"Boot Mode: UEFI\n" +
+			"Press F10 to Save & Exit\n\n" +
+			"Initializing PCIe devices...\n" +
+			"Checking NVRAM...\n"
+	default:
+		return "Configuring updates 35%...\n\nDo not turn off your computer."
+	}
 }
 
 func runTelegram(logger *log.Logger, cfg config.Config, svc *services.Manager, cfgPath string, args []string) int {
@@ -1861,8 +2049,8 @@ func usage(app string) {
 	fmt.Println("  stop")
 	fmt.Println("  status")
 	fmt.Println("  init [--force]")
-	fmt.Println("  mesh up|send|recv|status")
-	fmt.Println("  mesh discover|advertise|chat|clipboard|tun")
+	fmt.Println("  mesh up|send|recv|hydra-send|hydra-recv|status")
+	fmt.Println("  mesh discover|advertise|chat|clipboard|tun|gateway")
 	fmt.Println("  relay --listen :18080")
 	fmt.Println("  doh --listen 127.0.0.1:5353 --url https://.../dns-query")
 	fmt.Println("  emulate run|stop|status [--no-privacy|--host]")
@@ -1877,8 +2065,9 @@ func usage(app string) {
 	fmt.Println("  sync start|stop|status")
 	fmt.Println("  chat [--to host:port] [--alert] <message>")
 	fmt.Println("  harden enable|disable|status")
-	fmt.Println("  doctor")
-	fmt.Println("  update --url https://... --sha256 <sum> [--sig <sig_b64>] [--pub <pub_b64>]")
+	fmt.Println("  doctor [--deep]")
+	fmt.Println("  update --url https://... --sha256 <sum> [--sig <sig_b64>] [--pub <pub_b64>] [--ram]")
+	fmt.Println("  mask --mode update|bios|blank|htop")
 	fmt.Println("  telegram start|stop|status")
 	fmt.Println("  gateway start|stop")
 	fmt.Println("  script run <file.gsl>")

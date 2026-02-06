@@ -44,8 +44,8 @@ network:
 
 security:
   identity_key_path: "keys/identity.key"
-  identity_length: 256
-  identity_group: 15
+  identity_bits: 256
+  identity_group: 5
 
 mesh:
   relay_url: ""
@@ -76,6 +76,7 @@ mesh:
     shared: true
 
 emulate:
+  mode: "tor" # tor|silent|amnesic|host
   privacy_mode: true
   temp_dir: "ram"
   downloads_dir: "downloads"

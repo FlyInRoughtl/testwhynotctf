@@ -1,0 +1,12 @@
+[Unit]
+Description=Gargoyle FullAnon pre-lock network
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/gargoyle-prelock
+
+[Install]
+WantedBy=network-pre.target

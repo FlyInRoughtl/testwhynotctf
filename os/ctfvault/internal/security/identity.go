@@ -3,34 +3,38 @@ package security
 import (
 	"crypto/rand"
 	"errors"
+	"math"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-const identityAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+=[]{}:;,.<>?/"
+const identityAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-func GenerateIdentityKey(length, group int) (string, string, error) {
-	if length <= 0 {
-		return "", "", errors.New("length must be positive")
+func GenerateIdentityKey(bits, group int) (string, string, error) {
+	if bits <= 0 {
+		return "", "", errors.New("bits must be positive")
 	}
 	if group <= 0 {
 		return "", "", errors.New("group must be positive")
 	}
-	raw := make([]byte, length)
-	for i := 0; i < length; i++ {
-		idx, err := randomIndex(len(identityAlphabet))
-		if err != nil {
-			return "", "", err
-		}
-		raw[i] = identityAlphabet[idx]
+	byteLen := (bits + 7) / 8
+	rawBytes := make([]byte, byteLen)
+	if _, err := rand.Read(rawBytes); err != nil {
+		return "", "", err
+	}
+	raw := base62Encode(rawBytes)
+	expected := base62Length(bits)
+	if len(raw) < expected {
+		raw = strings.Repeat("0", expected-len(raw)) + raw
 	}
 
-	formatted := formatGrouped(string(raw), group)
-	return string(raw), formatted, nil
+	formatted := formatGrouped(raw, group)
+	return raw, formatted, nil
 }
 
-func EnsureIdentityKey(path string, length, group int) (string, error) {
+func EnsureIdentityKey(path string, bits, group int) (string, error) {
 	if path == "" {
 		return "", errors.New("identity key path is empty")
 	}
@@ -46,7 +50,7 @@ func EnsureIdentityKey(path string, length, group int) (string, error) {
 		return "", err
 	}
 
-	_, formatted, err := GenerateIdentityKey(length, group)
+	_, formatted, err := GenerateIdentityKey(bits, group)
 	if err != nil {
 		return "", err
 	}
@@ -54,21 +58,6 @@ func EnsureIdentityKey(path string, length, group int) (string, error) {
 		return "", err
 	}
 	return formatted, nil
-}
-
-func randomIndex(max int) (int, error) {
-	if max <= 0 {
-		return 0, errors.New("max must be positive")
-	}
-	b := make([]byte, 1)
-	for {
-		if _, err := rand.Read(b); err != nil {
-			return 0, err
-		}
-		if int(b[0]) < 256-(256%max) {
-			return int(b[0]) % max, nil
-		}
-	}
 }
 
 func formatGrouped(raw string, group int) string {
@@ -83,4 +72,34 @@ func formatGrouped(raw string, group int) string {
 		}
 	}
 	return b.String()
+}
+
+func base62Encode(data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
+	n := new(big.Int).SetBytes(data)
+	if n.Sign() == 0 {
+		return "0"
+	}
+	base := big.NewInt(int64(len(identityAlphabet)))
+	zero := big.NewInt(0)
+	var out []byte
+	for n.Cmp(zero) > 0 {
+		mod := new(big.Int)
+		n.DivMod(n, base, mod)
+		out = append(out, identityAlphabet[mod.Int64()])
+	}
+	// reverse
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return string(out)
+}
+
+func base62Length(bits int) int {
+	if bits <= 0 {
+		return 0
+	}
+	return int(math.Ceil(float64(bits) / math.Log2(62)))
 }

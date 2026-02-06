@@ -2,7 +2,9 @@
 .gomodcache/
 *.go.*
 os/liveusb/build/
-os/liveusb
+os/liveusb/cache/
+os/liveusb/.build/
+os/liveusb/.auto-*.lock
 
 # OS/editor noise
 .DS_Store

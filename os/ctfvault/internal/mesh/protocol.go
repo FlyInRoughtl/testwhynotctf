@@ -14,6 +14,11 @@ type Header struct {
 	Op            string                `json:"op"`
 	Token         string                `json:"token,omitempty"`
 	Name          string                `json:"name,omitempty"`
+	OrigName      string                `json:"orig_name,omitempty"`
+	FileID        string                `json:"file_id,omitempty"`
+	ChunkIndex    int                   `json:"chunk_index,omitempty"`
+	ChunkTotal    int                   `json:"chunk_total,omitempty"`
+	ChunkSize     int                   `json:"chunk_size,omitempty"`
 	Size          int64                 `json:"size,omitempty"`
 	Encrypted     bool                  `json:"encrypted"`
 	MetadataLevel string                `json:"metadata_level,omitempty"`

@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update || true
+apt-get install -y \
+  nmap \
+  sqlmap \
+  hydra \
+  john \
+  hashcat \
+  binwalk \
+  exiftool \
+  steghide \
+  foremost \
+  radare2 \
+  gdb \
+  ltrace \
+  strace \
+  tshark \
+  netcat-openbsd \
+  socat \
+  masscan \
+  ffuf \
+  wpscan \
+  zsteg \
+  ropper \
+  checksec \
+  || true

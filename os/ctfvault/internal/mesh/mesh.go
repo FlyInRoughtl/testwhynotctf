@@ -220,6 +220,14 @@ func writePadding(w io.Writer, size int) error {
 	return err
 }
 
+func readPadding(r io.Reader, size int) error {
+	if size <= 0 {
+		return nil
+	}
+	_, err := io.CopyN(io.Discard, r, int64(size))
+	return err
+}
+
 func connectTarget(ctx context.Context, opts SendOptions) (net.Conn, error) {
 	if opts.RelayChain != "" && opts.Route == "onion" {
 		chain, err := parseChain(opts.RelayChain)

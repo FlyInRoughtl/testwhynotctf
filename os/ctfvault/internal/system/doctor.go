@@ -2,6 +2,7 @@ package system
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
@@ -70,6 +71,48 @@ func RunDoctor(cfg config.Config) []CheckResult {
 			add("telegram", "err", "bot_token is empty")
 		} else {
 			add("telegram", "ok", "enabled")
+		}
+	}
+
+	return results
+}
+
+func RunDoctorDeep(cfg config.Config) []CheckResult {
+	results := RunDoctor(cfg)
+
+	add := func(name, status, detail string) {
+		results = append(results, CheckResult{Name: name, Status: status, Detail: detail})
+	}
+
+	if cfg.Network.TorAlwaysOn || cfg.Network.TorStrict {
+		if ok, err := TorKillswitchActive(); err != nil {
+			add("killswitch", "warn", err.Error())
+		} else if ok {
+			add("killswitch", "ok", "active")
+		} else {
+			add("killswitch", "warn", "not active")
+		}
+	}
+
+	infos, warns := leakCheck(cfg.Network.Mode, cfg.Network.TorAlwaysOn || cfg.Network.TorStrict)
+	for _, info := range infos {
+		add("leakcheck", "ok", info)
+	}
+	for _, warn := range warns {
+		add("leakcheck", "warn", warn)
+	}
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		add("mac", "warn", err.Error())
+	} else {
+		for _, iface := range ifaces {
+			if iface.Flags&net.FlagLoopback != 0 {
+				continue
+			}
+			if iface.HardwareAddr != nil && len(iface.HardwareAddr) > 0 {
+				add("mac", "ok", fmt.Sprintf("%s=%s", iface.Name, iface.HardwareAddr))
+			}
 		}
 	}
 

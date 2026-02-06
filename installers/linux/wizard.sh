@@ -177,8 +177,8 @@ network:
 
 security:
   identity_key_path: "keys/identity.key"
-  identity_length: 256
-  identity_group: 15
+  identity_bits: 256
+  identity_group: 5
 
 mesh:
   relay_url: ""

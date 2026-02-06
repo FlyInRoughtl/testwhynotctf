@@ -50,6 +50,24 @@ const (
 	viewSystem
 )
 
+type meshWizardKind int
+
+const (
+	meshWizardToggle meshWizardKind = iota
+	meshWizardSlider
+	meshWizardOption
+	meshWizardText
+)
+
+type meshWizardItem struct {
+	Key     string
+	Label   string
+	Kind    meshWizardKind
+	Min     int
+	Max     int
+	Options []string
+}
+
 const tickRate = 150 * time.Millisecond
 
 type tickMsg time.Time
@@ -102,6 +120,11 @@ type model struct {
 	lastMetricsAt   time.Time
 	actions         []config.QuickAction
 	actionsCursor   int
+	meshWizard      bool
+	meshWizardEdit  bool
+	meshWizardInput string
+	meshWizardCursor int
+	meshWizardItems []meshWizardItem
 }
 
 type netScanMsg struct {
@@ -179,6 +202,7 @@ func initialModel(cfg config.Config, home string, identity string, svc *services
 		usbEvents:     usbEvents,
 		inMenu:        true,
 		actions:       cfg.QuickActionsFor(cfg.System.Mode),
+		meshWizardItems: defaultMeshWizardItems(),
 	}
 }
 
@@ -334,6 +358,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.String() == "?" || msg.String() == "H" {
 			m.showHelp = !m.showHelp
 			return m, nil
+		}
+		if m.meshWizard {
+			return handleMeshWizard(m, msg)
 		}
 		if m.broadcastActive {
 			switch msg.Type {
@@ -530,6 +557,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = view(m.cursor)
 				return m, nil
 			}
+			if m.view == viewMesh {
+				m.meshWizard = true
+				m.meshWizardCursor = 0
+				return m, nil
+			}
 			if msg.String() == "enter" {
 				if m.view == viewActions {
 					if len(m.actions) == 0 {
@@ -544,11 +576,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return m, openActionTerminalCmd(m.actions[m.actionsCursor], m.home)
 				}
-				return m, openSectionTerminalCmd(m.view, m.home)
+				if m.view == viewTerminal {
+					return m, openShellTerminalCmd()
+				}
 			}
 		case "left", "esc":
 			if !m.inMenu {
 				m.inMenu = true
+				return m, nil
+			}
+		case "w":
+			if m.view == viewMesh && !m.inMenu {
+				m.meshWizard = true
+				m.meshWizardCursor = 0
 				return m, nil
 			}
 		case "c":
@@ -646,6 +686,14 @@ func (m model) View() string {
 		layout := lipgloss.JoinVertical(lipgloss.Left, header, help, footer)
 		return appStyle.Render(layout)
 	}
+	if m.meshWizard {
+		appStyle := lipgloss.NewStyle().Padding(1, 2)
+		header := headerView(m)
+		footer := footerView(m)
+		main := meshWizardView(m)
+		layout := lipgloss.JoinVertical(lipgloss.Left, header, main, footer)
+		return appStyle.Render(layout)
+	}
 	appStyle := lipgloss.NewStyle().Padding(1, 2)
 	header := headerView(m)
 	sidebar := sidebarView(m)
@@ -739,7 +787,7 @@ func mainView(m model) string {
 }
 
 func footerView(m model) string {
-	hint := "Up/Down: menu | Enter/Right: open | Left/Esc: back | r: relay | d: doh | h: hotspot | g: gateway | y: sync | b: broadcast | c: shell | ?: help | f10: boss | q: quit"
+	hint := "Up/Down: menu | Enter/Right: open | Left/Esc: back | Actions/Terminal: Enter runs | w: mesh wizard | r: relay | d: doh | h: hotspot | g: gateway | y: sync | b: broadcast | c: shell | ?: help | f10: boss | q: quit"
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(hint)
 }
 
@@ -764,6 +812,14 @@ func bossView(m model) string {
 			"  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND\n" +
 			"  972 root      20   0  102932   9876   8420 S   0.7  0.1   0:01.23 NetworkManager\n" +
 			" 1442 user      20   0  318400  30500  22000 S   1.3  0.4   0:12.88 gnome-shell\n"
+	case "bios":
+		return "UEFI Firmware Settings\n\n" +
+			"CPU: Intel(R) Core(TM) i7\n" +
+			"Memory: 8192 MB\n" +
+			"Boot Mode: UEFI\n" +
+			"Press F10 to Save & Exit\n\n" +
+			"Initializing PCIe devices...\n" +
+			"Checking NVRAM...\n"
 	default:
 		return "Configuring updates 35%...\n\n" +
 			"Do not turn off your computer."
@@ -891,7 +947,7 @@ func meshView(m model) string {
 		errLine = "\nDiscovery error: " + m.meshErr
 	}
 	return fmt.Sprintf(
-		"Mesh\n\nStatus: direct mode\nSend/Recv: available\nRelay/Onion: available via CLI\nDiscovery: %s (port %d)\nPeers:\n%s\nClipboard share: %s\nTun: %s%s",
+		"Mesh\n\nStatus: direct mode\nSend/Recv: available\nRelay/Onion: available via CLI\nDiscovery: %s (port %d)\nPeers:\n%s\nClipboard share: %s\nTun: %s\n\nPress W or Enter for Mesh Wizard%s",
 		onOff(m.cfg.Mesh.DiscoveryEnabled),
 		m.cfg.Mesh.DiscoveryPort,
 		peers,
@@ -899,6 +955,275 @@ func meshView(m model) string {
 		onOff(m.cfg.Mesh.TunEnabled),
 		errLine,
 	)
+}
+
+func defaultMeshWizardItems() []meshWizardItem {
+	return []meshWizardItem{
+		{Key: "discovery_enabled", Label: "Discovery", Kind: meshWizardToggle},
+		{Key: "discovery_port", Label: "Discovery port", Kind: meshWizardSlider, Min: 1024, Max: 65535},
+		{Key: "chat_enabled", Label: "Chat enabled", Kind: meshWizardToggle},
+		{Key: "chat_listen", Label: "Chat listen", Kind: meshWizardText},
+		{Key: "chat_psk", Label: "Chat PSK", Kind: meshWizardText},
+		{Key: "clipboard_share", Label: "Clipboard share", Kind: meshWizardToggle},
+		{Key: "onion_only", Label: "Onion only", Kind: meshWizardToggle},
+		{Key: "hydra_enabled", Label: "HYDRA enabled", Kind: meshWizardToggle},
+		{Key: "hydra_mode", Label: "HYDRA mode", Kind: meshWizardOption, Options: []string{"direct", "vortex", "obsidian"}},
+		{Key: "hydra_noise", Label: "HYDRA noise", Kind: meshWizardToggle},
+		{Key: "mimic_peer", Label: "Mimic peer", Kind: meshWizardText},
+		{Key: "onion_depth", Label: "Onion depth", Kind: meshWizardSlider, Min: 1, Max: 6},
+		{Key: "padding_bytes", Label: "Padding bytes", Kind: meshWizardSlider, Min: 0, Max: 4096},
+		{Key: "metadata_level", Label: "Metadata level", Kind: meshWizardOption, Options: []string{"off", "standard", "full"}},
+		{Key: "transport", Label: "Transport", Kind: meshWizardOption, Options: []string{"tcp", "tls"}},
+		{Key: "relay_url", Label: "Relay URL", Kind: meshWizardText},
+	}
+}
+
+func meshWizardView(m model) string {
+	var b strings.Builder
+	b.WriteString("Mesh Wizard\n\n")
+	for i, item := range m.meshWizardItems {
+		cursor := " "
+		if i == m.meshWizardCursor {
+			cursor = ">"
+		}
+		b.WriteString(fmt.Sprintf("%s %s: %s\n", cursor, item.Label, meshWizardValue(m, item)))
+	}
+	if m.meshWizardEdit {
+		b.WriteString("\nEdit: ")
+		b.WriteString(m.meshWizardInput)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nSpace: toggle | Left/Right: change | Enter: edit | Esc: exit")
+	return b.String()
+}
+
+func meshWizardValue(m model, item meshWizardItem) string {
+	switch item.Key {
+	case "discovery_enabled":
+		return check(m.cfg.Mesh.DiscoveryEnabled)
+	case "discovery_port":
+		return slider(m.cfg.Mesh.DiscoveryPort, item.Min, item.Max)
+	case "chat_enabled":
+		return check(m.cfg.Mesh.ChatEnabled)
+	case "chat_listen":
+		return emptyIf(m.cfg.Mesh.ChatListen)
+	case "chat_psk":
+		if m.cfg.Mesh.ChatPSK != "" {
+			return "******"
+		}
+		return "<empty>"
+	case "clipboard_share":
+		return check(m.cfg.Mesh.ClipboardShare)
+	case "onion_only":
+		return check(m.cfg.Mesh.OnionOnly)
+	case "hydra_enabled":
+		return check(m.cfg.Mesh.HydraEnabled)
+	case "hydra_mode":
+		return m.cfg.Mesh.HydraMode
+	case "hydra_noise":
+		return check(m.cfg.Mesh.HydraNoise)
+	case "mimic_peer":
+		return emptyIf(m.cfg.Mesh.MimicPeer)
+	case "onion_depth":
+		return slider(m.cfg.Mesh.OnionDepth, item.Min, item.Max)
+	case "padding_bytes":
+		return slider(m.cfg.Mesh.PaddingBytes, item.Min, item.Max)
+	case "metadata_level":
+		return m.cfg.Mesh.MetadataLevel
+	case "transport":
+		return m.cfg.Mesh.Transport
+	case "relay_url":
+		return emptyIf(m.cfg.Mesh.RelayURL)
+	default:
+		return ""
+	}
+}
+
+func meshWizardTextValue(m model, item meshWizardItem) string {
+	switch item.Key {
+	case "chat_listen":
+		return m.cfg.Mesh.ChatListen
+	case "chat_psk":
+		return m.cfg.Mesh.ChatPSK
+	case "mimic_peer":
+		return m.cfg.Mesh.MimicPeer
+	case "relay_url":
+		return m.cfg.Mesh.RelayURL
+	default:
+		return ""
+	}
+}
+
+func meshWizardSet(m *model, item meshWizardItem, delta int) {
+	switch item.Key {
+	case "discovery_enabled":
+		m.cfg.Mesh.DiscoveryEnabled = !m.cfg.Mesh.DiscoveryEnabled
+	case "discovery_port":
+		m.cfg.Mesh.DiscoveryPort = clampInt(m.cfg.Mesh.DiscoveryPort+delta, item.Min, item.Max)
+	case "chat_enabled":
+		m.cfg.Mesh.ChatEnabled = !m.cfg.Mesh.ChatEnabled
+	case "clipboard_share":
+		m.cfg.Mesh.ClipboardShare = !m.cfg.Mesh.ClipboardShare
+	case "onion_only":
+		m.cfg.Mesh.OnionOnly = !m.cfg.Mesh.OnionOnly
+	case "hydra_enabled":
+		m.cfg.Mesh.HydraEnabled = !m.cfg.Mesh.HydraEnabled
+	case "hydra_noise":
+		m.cfg.Mesh.HydraNoise = !m.cfg.Mesh.HydraNoise
+	case "onion_depth":
+		m.cfg.Mesh.OnionDepth = clampInt(m.cfg.Mesh.OnionDepth+delta, item.Min, item.Max)
+	case "padding_bytes":
+		m.cfg.Mesh.PaddingBytes = clampInt(m.cfg.Mesh.PaddingBytes+delta, item.Min, item.Max)
+	case "hydra_mode":
+		m.cfg.Mesh.HydraMode = cycleOption(m.cfg.Mesh.HydraMode, item.Options, delta)
+	case "metadata_level":
+		m.cfg.Mesh.MetadataLevel = cycleOption(m.cfg.Mesh.MetadataLevel, item.Options, delta)
+	case "transport":
+		m.cfg.Mesh.Transport = cycleOption(m.cfg.Mesh.Transport, item.Options, delta)
+	}
+}
+
+func handleMeshWizard(m model, msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if len(m.meshWizardItems) == 0 {
+		m.meshWizardItems = defaultMeshWizardItems()
+	}
+	if m.meshWizardEdit {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.meshWizardEdit = false
+			m.meshWizardInput = ""
+			return m, nil
+		case tea.KeyEnter:
+			item := m.meshWizardItems[m.meshWizardCursor]
+			applyMeshWizardInput(&m, item, m.meshWizardInput)
+			m.meshWizardEdit = false
+			m.meshWizardInput = ""
+			return m, nil
+		case tea.KeyBackspace, tea.KeyDelete:
+			if len(m.meshWizardInput) > 0 {
+				m.meshWizardInput = m.meshWizardInput[:len(m.meshWizardInput)-1]
+			}
+			return m, nil
+		default:
+			if msg.Type == tea.KeyRunes {
+				m.meshWizardInput += msg.String()
+			}
+			return m, nil
+		}
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.meshWizard = false
+		return m, nil
+	case "up":
+		if m.meshWizardCursor > 0 {
+			m.meshWizardCursor--
+		}
+	case "down":
+		if m.meshWizardCursor < len(m.meshWizardItems)-1 {
+			m.meshWizardCursor++
+		}
+	case " ":
+		item := m.meshWizardItems[m.meshWizardCursor]
+		if item.Kind == meshWizardToggle {
+			meshWizardSet(&m, item, 0)
+		}
+	case "right":
+		item := m.meshWizardItems[m.meshWizardCursor]
+		switch item.Kind {
+		case meshWizardSlider:
+			meshWizardSet(&m, item, 1)
+		case meshWizardOption:
+			meshWizardSet(&m, item, 1)
+		}
+	case "left":
+		item := m.meshWizardItems[m.meshWizardCursor]
+		switch item.Kind {
+		case meshWizardSlider:
+			meshWizardSet(&m, item, -1)
+		case meshWizardOption:
+			meshWizardSet(&m, item, -1)
+		}
+	case "enter":
+		item := m.meshWizardItems[m.meshWizardCursor]
+		if item.Kind == meshWizardText {
+			m.meshWizardEdit = true
+			m.meshWizardInput = meshWizardTextValue(m, item)
+		}
+	case "w":
+		m.meshWizard = false
+		return m, nil
+	}
+	return m, nil
+}
+
+func applyMeshWizardInput(m *model, item meshWizardItem, value string) {
+	value = strings.TrimSpace(value)
+	switch item.Key {
+	case "chat_listen":
+		if value != "" {
+			m.cfg.Mesh.ChatListen = value
+		}
+	case "chat_psk":
+		m.cfg.Mesh.ChatPSK = value
+	case "mimic_peer":
+		m.cfg.Mesh.MimicPeer = value
+	case "relay_url":
+		m.cfg.Mesh.RelayURL = value
+	}
+}
+
+func check(v bool) string {
+	if v {
+		return "[x]"
+	}
+	return "[ ]"
+}
+
+func slider(v int, min int, max int) string {
+	if max <= min {
+		return fmt.Sprintf("%d", v)
+	}
+	width := 10
+	v = clampInt(v, min, max)
+	ratio := float64(v-min) / float64(max-min)
+	filled := int(ratio * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return fmt.Sprintf("[%s%s] %d", strings.Repeat("#", filled), strings.Repeat(" ", width-filled), v)
+}
+
+func clampInt(v int, min int, max int) int {
+	if v < min {
+		return min
+	}
+	if v > max {
+		return max
+	}
+	return v
+}
+
+func cycleOption(cur string, options []string, delta int) string {
+	if len(options) == 0 {
+		return cur
+	}
+	idx := 0
+	for i, opt := range options {
+		if opt == cur {
+			idx = i
+			break
+		}
+	}
+	idx = (idx + delta) % len(options)
+	if idx < 0 {
+		idx += len(options)
+	}
+	return options[idx]
 }
 
 func collectWarnings(m model) []string {
@@ -1076,6 +1401,7 @@ func helpView(m model) string {
 		"- 1-9: jump to section\n" +
 		"- ?: toggle help\n\n" +
 		"Global hotkeys:\n" +
+		"- w: mesh wizard\n" +
 		"- r: relay start/stop\n" +
 		"- d: DoH start/stop\n" +
 		"- c: open shell (exit to return)\n" +
@@ -1087,7 +1413,8 @@ func helpView(m model) string {
 		"- Gateway: g start/stop\n" +
 		"- Sync: y start/stop\n" +
 		"- Broadcast: b compose, a alert toggle\n\n" +
-		"- Actions: Enter runs selected quick action\n\n" +
+		"- Actions: Enter runs selected quick action\n" +
+		"- Terminal: Enter opens new shell\n\n" +
 		"CLI help: gargoyle help / gargoyle help-gargoyle"
 	return box.Render(text)
 }
@@ -1282,17 +1609,6 @@ func metricsCmd(home string) tea.Cmd {
 	}
 }
 
-func openSectionTerminalCmd(v view, home string) tea.Cmd {
-	if v == viewTerminal {
-		return openShellTerminalCmd()
-	}
-	cmdline := sectionCommand(v, home)
-	if cmdline == "" {
-		return func() tea.Msg { return shellDoneMsg{Err: errors.New("no command for this view")} }
-	}
-	return openCmdInTerminal(cmdline)
-}
-
 func openActionTerminalCmd(action config.QuickAction, home string) tea.Cmd {
 	cmdline := strings.TrimSpace(action.Cmd)
 	if cmdline == "" {
@@ -1347,47 +1663,6 @@ func openCmdInTerminal(cmdline string) tea.Cmd {
 	return tea.ExecProcess(exec.Command(term, args...), func(err error) tea.Msg {
 		return shellDoneMsg{Err: err}
 	})
-}
-
-func sectionCommand(v view, home string) string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	homeArg := fmt.Sprintf("--home %q", home)
-	base := fmt.Sprintf("%q %s", exe, homeArg)
-	switch v {
-	case viewHome:
-		return base + " status"
-	case viewActions:
-		return ""
-	case viewNetwork:
-		return base + " doctor"
-	case viewStorage:
-		return base + " status"
-	case viewEmulate:
-		return base + " emulate status"
-	case viewHub:
-		return base + " hub status"
-	case viewTools:
-		return base + " tools list"
-	case viewMesh:
-		return base + " mesh status"
-	case viewHotspot:
-		return base + " hotspot status"
-	case viewSync:
-		return base + " sync status"
-	case viewWarnings:
-		return base + " status"
-	case viewStatus:
-		return base + " status"
-	case viewTerminal:
-		return ""
-	case viewSystem:
-		return base + " version"
-	default:
-		return ""
-	}
 }
 
 func pickTerminal(cmdline string) (string, []string, error) {

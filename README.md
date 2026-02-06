@@ -1,8 +1,8 @@
 ﻿# Gargoyle
 
-Gargoyle — переносимая изолированная среда для CTF/лабораторных задач (CLI/TUI на хост‑ОС).  
+Gargoyle OS — переносимая изолированная среда для CTF/лабораторных задач.  
 Фокус: удобство, модульные инструменты, best‑effort приватность.  
-Полной анонимности не обещаем; Live‑OS/ISO отложены (roadmap v5+). План: Live‑OS v5‑6 с тайловым оконным менеджером (TWM).
+Live‑OS/ISO: v5 “Ghost Protocol” (Debian + i3/Xorg).
 
 Документация:
 - SPEC.md — краткое ТЗ и рамки
@@ -11,8 +11,9 @@ Gargoyle — переносимая изолированная среда для
 - CHEATSHEET.md — быстрые команды
 
 ## Быстрый старт
-- Windows: `installers/windows/bootstrap.cmd`
-- Linux: `bash installers/linux/bootstrap.sh`
+  - Windows: `installers/windows/bootstrap.cmd`
+  - Linux: `bash installers/linux/bootstrap.sh`
+  - Live‑OS: `os/liveusb/build.sh`
 - Wizard (USB/Folder):
   - Windows: `installers/windows/wizard.cmd`
   - Windows quick (USB, defaults): `installers/windows/quick.cmd`
@@ -49,14 +50,23 @@ gargoyle mesh recv --listen :19999 --out ./downloads --psk secret --transport tl
 
 gargoyle mesh send ./file.txt file.txt --to 127.0.0.1:19999 --security --psk secret --transport tls
 
+# HYDRA (multi-path file transfer)
+gargoyle mesh hydra-send ./file.txt --targets 10.0.0.2:19999,10.0.0.3:19999 --security --psk secret --mode direct
+gargoyle mesh hydra-recv --listen :19999 --out ./downloads --psk secret
+
 # help
 
 gargoyle help
 
 gargoyle help-gargoyle
 
+gargoyle doctor --deep
+
 # update (sha256 + optional signature)
-gargoyle update --url https://.../gargoyle --sha256 <sum> --sig <sig_b64> --pub <pub_b64>
+gargoyle update --url https://.../gargoyle --sha256 <sum> --sig <sig_b64> --pub <pub_b64> [--ram]
+
+# mask (boss key)
+gargoyle mask --mode update
 ```
 
 ## Tools packs
@@ -79,8 +89,13 @@ gargoyle install pack-osint --repo https://raw.githubusercontent.com/<org>/<repo
 ## Важные примечания
 - Linux поддерживается лучше (LUKS, iptables kill‑switch, USB watcher).
 - FullAnon на Linux включает pre‑lock: сеть выключается, затем ставится kill‑switch, и только потом сеть включается.
-- Даже с FullAnon есть «окно» до запуска Gargoyle (boot‑leak). Полностью закрывается только Live‑OS.
+- Даже с FullAnon есть «окно» до запуска Gargoyle (boot‑leak) на хост‑ОС. В Live‑OS это закрывается pre‑lock.
 - Linux USB layout: recovery codes (если включены) сохраняются в shared‑разделе на флешке.
 - Windows: best‑effort, без LUKS и без системного forced‑Tor.
 - Windows‑ограничения: нет iptables‑kill‑switch, нет nmcli/hotspot/NAT, нет USB‑watcher, нет bubblewrap‑изоляции.
 - DNS не меняет внешний IP (это не VPN).
+
+## Windows vs Linux
+- **Linux**: полный функционал (Tor kill‑switch, nmcli, hotspot/NAT, USB watcher, bubblewrap).
+- **Windows**: урезанный режим (без iptables/nmcli/bubblewrap). 
+- **Tools packs**: `apt:` работает только на Linux/WSL. На Windows используйте `winget:` или `choco:`.

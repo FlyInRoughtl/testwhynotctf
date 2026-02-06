@@ -1,9 +1,9 @@
-﻿# LEGACY config file name (ctfvault.yaml). Use gargoyle.yaml instead.
 system:
-  ram_limit_mb: 2048
-  cpu_limit: 2
+  ram_limit_mb: 4096
+  cpu_limit: 4
   locale: "ru"
   edition: "public"
+  mode: "standard"
 
 storage:
   persistent: true
@@ -21,14 +21,14 @@ network:
   vpn_type: ""
   vpn_profile: ""
   gateway_ip: ""
-  proxy_engine: "" # sing-box|xray|hiddify
+  proxy_engine: ""
   proxy_config: ""
-  dns_profile: "system" # system|xbox|custom
+  dns_profile: "system"
   dns_custom: ""
   doh_url: ""
   doh_listen: "127.0.0.1:5353"
-  tor: false
-  tor_always_on: false
+  tor: true
+  tor_always_on: true
   tor_strict: false
   tor_trans_port: 9040
   tor_dns_port: 9053
@@ -50,35 +50,44 @@ mesh:
   relay_url: ""
   onion_depth: 3
   metadata_level: "standard"
-  transport: "tls" # tcp|tls
-  padding_bytes: 256 # optional padding to reduce fingerprinting
+  transport: "tls"
+  padding_bytes: 256
   discovery_enabled: false
   discovery_port: 19998
   discovery_key: ""
   auto_join: false
   chat_enabled: true
+  chat_listen: ":19997"
+  chat_psk: ""
+  chat_psk_file: ""
   clipboard_share: false
   clipboard_warn: true
   tun_enabled: false
   tun_device: "gargoyle0"
   tun_cidr: "10.42.0.1/24"
   tun_peer_cidr: "10.42.0.0/24"
+  onion_only: false
+  relay_allowlist: []
+  hotspot:
+    ssid: ""
+    password: ""
+    ifname: ""
+    shared: true
 
 emulate:
-  mode: "tor" # tor|silent|amnesic|host
   privacy_mode: true
   temp_dir: "ram"
   downloads_dir: "downloads"
   display_server: "direct"
 
 tunnel:
-  type: "frp" # frp|relay|wss
+  type: "frp"
   server: ""
   token: ""
   local_ip: "127.0.0.1"
 
 mail:
-  mode: "local" # local|tunnel
+  mode: "local"
   sink: true
   local_server: true
   sink_listen: "127.0.0.1:1025"
@@ -97,20 +106,10 @@ ui:
 tools:
   file: "tools.yaml"
   auto_install: false
+  repository: ""
 
 update:
   url: ""
   channel: "stable"
   public_key: ""
   auto: false
-
-telegram:
-  enabled: false
-  bot_token: ""
-  allowed_user_id: 0
-  pairing_ttl: 60
-  allow_cli: false
-  allow_wipe: false
-  allow_stats: true
-
-

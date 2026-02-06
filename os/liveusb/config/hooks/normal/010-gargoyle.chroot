@@ -1,0 +1,29 @@
+#!/bin/sh
+set -e
+
+chmod +x /usr/local/bin/gargoyle \
+  /usr/local/bin/gargoyle-launch \
+  /usr/local/bin/gargoyle-xsession \
+  /usr/local/bin/gargoyle-bootmode \
+  /usr/local/bin/gargoyle-oobe \
+  /usr/local/bin/gargoyle-persist-mount \
+  /usr/local/bin/gargoyle-macspoof \
+  /usr/local/bin/gargoyle-usbguard \
+  /usr/local/bin/gargoyle-prelock \
+  /usr/local/bin/gargoyle-usb-watchdog \
+  /usr/local/bin/gargoyle-ramwipe
+
+chmod +x /etc/initramfs-tools/scripts/init-top/gargoyle-prelock
+
+mkdir -p /etc/systemd/system/multi-user.target.wants
+ln -sf /etc/systemd/system/gargoyle.service /etc/systemd/system/multi-user.target.wants/gargoyle.service
+ln -sf /etc/systemd/system/gargoyle-bootmode.service /etc/systemd/system/multi-user.target.wants/gargoyle-bootmode.service
+ln -sf /etc/systemd/system/gargoyle-prelock.service /etc/systemd/system/multi-user.target.wants/gargoyle-prelock.service
+ln -sf /etc/systemd/system/gargoyle-macspoof.service /etc/systemd/system/multi-user.target.wants/gargoyle-macspoof.service
+ln -sf /etc/systemd/system/gargoyle-usbguard.service /etc/systemd/system/multi-user.target.wants/gargoyle-usbguard.service
+ln -sf /etc/systemd/system/gargoyle-usb-watchdog.service /etc/systemd/system/multi-user.target.wants/gargoyle-usb-watchdog.service
+ln -sf /etc/systemd/system/gargoyle-ramwipe.service /etc/systemd/system/multi-user.target.wants/gargoyle-ramwipe.service
+
+if command -v update-initramfs >/dev/null 2>&1; then
+  update-initramfs -u
+fi

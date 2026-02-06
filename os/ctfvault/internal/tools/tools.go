@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/google/shlex"
@@ -101,8 +102,23 @@ func InstallAll(pack Pack) ([]string, error) {
 func runInstall(install string) error {
 	switch {
 	case strings.HasPrefix(install, "apt:"):
+		if runtime.GOOS == "windows" {
+			return errors.New("apt supported on Linux only")
+		}
 		pkg := strings.TrimPrefix(install, "apt:")
 		return exec.Command("apt-get", "install", "-y", pkg).Run()
+	case strings.HasPrefix(install, "winget:"):
+		if runtime.GOOS != "windows" {
+			return errors.New("winget supported on Windows only")
+		}
+		pkg := strings.TrimPrefix(install, "winget:")
+		return exec.Command("winget", "install", "-e", "--id", pkg).Run()
+	case strings.HasPrefix(install, "choco:"):
+		if runtime.GOOS != "windows" {
+			return errors.New("choco supported on Windows only")
+		}
+		pkg := strings.TrimPrefix(install, "choco:")
+		return exec.Command("choco", "install", "-y", pkg).Run()
 	case strings.HasPrefix(install, "go:"):
 		pkg := strings.TrimPrefix(install, "go:")
 		return exec.Command("go", "install", pkg).Run()

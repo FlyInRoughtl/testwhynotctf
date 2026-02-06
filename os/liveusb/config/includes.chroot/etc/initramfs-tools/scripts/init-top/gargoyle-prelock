@@ -1,0 +1,39 @@
+#!/bin/sh
+PREREQ=""
+
+prereqs() {
+  echo "$PREREQ"
+}
+
+case "$1" in
+  prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+if ! grep -q "gargoyle.mode=fullanon" /proc/cmdline; then
+  exit 0
+fi
+
+if command -v rfkill >/dev/null 2>&1; then
+  rfkill block all || true
+fi
+
+if command -v ip >/dev/null 2>&1; then
+  for iface in $(ls /sys/class/net); do
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    ip link set "$iface" down >/dev/null 2>&1 || true
+  done
+elif command -v ifconfig >/dev/null 2>&1; then
+  for iface in $(ls /sys/class/net); do
+    if [ "$iface" = "lo" ]; then
+      continue
+    fi
+    ifconfig "$iface" down >/dev/null 2>&1 || true
+  done
+fi
+
+exit 0

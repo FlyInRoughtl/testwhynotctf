@@ -56,6 +56,26 @@ function Has-Cmd($name) {
     return (Get-Command $name -ErrorAction SilentlyContinue) -ne $null
 }
 
+function Add-ToPath($dir) {
+    if (-not $dir) { return $false }
+    $dir = $dir.TrimEnd("\")
+    $current = [Environment]::GetEnvironmentVariable("Path","User")
+    if ($current) {
+        $parts = $current.Split(";") | ForEach-Object { $_.Trim() }
+        if ($parts -contains $dir) { return $true }
+        $newPath = "$current;$dir"
+    } else {
+        $newPath = $dir
+    }
+    try {
+        [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+        return $true
+    } catch {
+        Write-Host "WARN: failed to update PATH: $_" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 function Find-VeraCrypt() {
     $cmd = Get-Command veracrypt -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
@@ -527,8 +547,8 @@ network:
 
 security:
   identity_key_path: "keys/identity.key"
-  identity_length: 256
-  identity_group: 15
+  identity_bits: 256
+  identity_group: 5
 
 mesh:
   relay_url: ""
@@ -692,6 +712,7 @@ try {
         $bt = Ask-YesNo "Enable Bluetooth by default?" $false
         $ports = Ask-YesNo "Open ports by default?" $false
         $installScripts = Ask-YesNo "Install Gargoyle Script (DSL) samples?" $true
+        $addToPath = Ask-YesNo "Add Gargoyle to PATH (recommended)?" $true
         $usbEnabled = Ask-YesNo "Enable USB access inside Gargoyle?" $false
         $usbReadOnly = $false
         if ($usbEnabled) {
@@ -787,6 +808,7 @@ $meshClipboard = $false
 $usbLabel = "GARGOYLE_SHARED"
 $copySource = $true
 $autoBuild = $true
+$addToPath = $true
 if ($opMode -eq "fullanon") {
     $netMode = "direct"
     $torInstall = $true
@@ -992,6 +1014,9 @@ if ($advanced) {
         New-Item -ItemType Directory -Force -Path $scriptsDir | Out-Null
         Write-SampleScript (Join-Path $scriptsDir "sample.gsl")
     }
+    if ($addToPath) {
+        Add-ToPath $homeRoot | Out-Null
+    }
     Write-Host "Folder install complete: $homeRoot" -ForegroundColor Green
     Write-PostInstallSummary $homeRoot
     Read-Host "Press Enter to exit"
@@ -1085,6 +1110,9 @@ if ($drive) {
                 Write-Host "manage-bde not found (BitLocker unavailable)" -ForegroundColor Red
             }
         }
+    }
+    if ($addToPath) {
+        Add-ToPath $homeRoot | Out-Null
     }
     Write-Host "USB formatted as exFAT shared. Full ext4/LUKS layout requires Linux wizard." -ForegroundColor Yellow
     Write-PostInstallSummary $homeRoot
