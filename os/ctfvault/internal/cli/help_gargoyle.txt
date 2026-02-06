@@ -13,7 +13,7 @@
 - emulate run|stop|status (Linux) [--no-privacy|--host]
 - tools list|install|edit
 - install pack-<name> [--repo URL]
-- doctor | update | telegram | profile | wipe
+- doctor | update | telegram | profile | wipe | harden
   update: --sha256 <sum> --sig <sig_b64> --pub <pub_b64>
 
 Tools packs
@@ -26,4 +26,5 @@ Tools packs
 Важно
 - Анонимность best‑effort.
 - Tor strict (Linux) = iptables kill‑switch.
+- harden enable: pre-lock сети + volatile logs (Linux only).
 - Live‑OS/ISO отложено (v5+).

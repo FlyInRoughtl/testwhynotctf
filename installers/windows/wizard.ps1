@@ -150,7 +150,7 @@ print "Relay running"
 "@ | Set-Content -Path $path -Encoding ascii
 }
 
-function Show-Plan($target, $location, $layout, $systemSize, $persistSize, $freeSpace, $clusterKb, $edition, $opMode, $dnsProfile, $torStrict, $usbEnabled, $usbReadOnly, $ramOnly, $toolsFile) {
+function Show-Plan($target, $location, $layout, $systemSize, $persistSize, $freeSpace, $clusterKb, $edition, $opMode, $dnsProfile, $torStrict, $usbEnabled, $usbReadOnly, $ramOnly, $toolsFile, $usbLabel) {
     Write-Host ""
     Write-Host "===== INSTALL PLAN =====" -ForegroundColor Yellow
     Write-Host "Target: $target"
@@ -160,6 +160,7 @@ function Show-Plan($target, $location, $layout, $systemSize, $persistSize, $free
     if ($persistSize) { Write-Host "PERSIST size: $persistSize MB" }
     if ($freeSpace) { Write-Host "Free space: $freeSpace MB" }
     if ($clusterKb) { Write-Host "exFAT cluster: $clusterKb KB" }
+    if ($usbLabel) { Write-Host "USB label: $usbLabel" }
     Write-Host "Edition: $edition"
     Write-Host "Mode: $opMode"
     Write-Host "DNS: $dnsProfile"
@@ -593,6 +594,7 @@ $meshOnion = $false
 $meshDiscovery = $false
 $meshChat = $true
 $meshClipboard = $false
+$usbLabel = "GARGOYLE_SHARED"
 if ($opMode -eq "fullanon") {
     $netMode = "direct"
     $torInstall = $true
@@ -713,6 +715,8 @@ if ($advanced) {
     $uiTheme = Ask-Choice "UI theme" @("dark", "light")
     $uiBossKey = Ask-YesNo "Boss-key enabled?" $uiBossKey
     $uiBossMode = Ask-Choice "Boss mode" @("update", "htop", "blank")
+    $usbLabel = Read-Host "USB volume label (default $usbLabel)"
+    if (-not $usbLabel) { $usbLabel = "GARGOYLE_SHARED" }
     $toolsProfile = Ask-Choice "Tools pack profile" @("ctf (recommended)", "none", "anonymity", "ctf+emulate", "osint")
     switch ($toolsProfile) {
         "ctf (recommended)" { $toolsFile = "tools\\packs\\ctf.yaml" }
@@ -752,7 +756,7 @@ if ($advanced) {
 if ($target -like "Folder*") {
     $folder = Read-Host "Enter install folder path"
     if (-not $folder) { throw "Folder path is required" }
-    Show-Plan "Folder" $folder "" "" "" "" "" $edition $opMode $dnsProfile $torStrict $usbEnabled $usbReadOnly $ramOnly $toolsFile
+    Show-Plan "Folder" $folder "" "" "" "" "" $edition $opMode $dnsProfile $torStrict $usbEnabled $usbReadOnly $ramOnly $toolsFile ""
     $action = Ask-Choice "Proceed?" @("Proceed", "Dry-run (show plan only)", "Cancel")
     if ($action -like "Dry-run*") { Write-Host "Dry-run complete. No changes applied." -ForegroundColor Yellow; exit 0 }
     if ($action -like "Cancel*") { throw "Cancelled" }
@@ -789,13 +793,22 @@ Write-Host "USB disks:" -ForegroundColor Cyan
 foreach ($d in $disks) {
     Write-Host ("Disk {0}: {1} {2}GB" -f $d.Number, $d.FriendlyName, [math]::Round($d.Size/1GB,2))
 }
-$diskNum = Read-Host "Enter disk number to format as exFAT (THIS ERASES DATA)"
+$diskNum = $null
+while ($true) {
+    $diskNum = Read-Host "Enter disk number to format as exFAT (THIS ERASES DATA)"
+    if ($diskNum -match '^[0-9]+$') {
+        $diskNum = [int]$diskNum
+        $testDisk = Get-Disk -Number $diskNum -ErrorAction SilentlyContinue
+        if ($testDisk) { break }
+    }
+    Write-Host "Invalid input. Enter a disk number from the list above (e.g., 1). Filesystem is already exFAT." -ForegroundColor Red
+}
 $leaveFree = Read-Host "Leave unallocated space at end (MB, default 0)"
 if (-not $leaveFree) { $leaveFree = 0 }
 $leaveFreeMB = 0
 if ($leaveFree -match '^[0-9]+$') { $leaveFreeMB = [int64]$leaveFree }
 $layout = "Shared-only (exFAT)"
-Show-Plan "USB" ("Disk " + $diskNum) $layout "" "" $leaveFreeMB 512 $edition $opMode $dnsProfile $torStrict $usbEnabled $usbReadOnly $ramOnly $toolsFile
+Show-Plan "USB" ("Disk " + $diskNum) $layout "" "" $leaveFreeMB 512 $edition $opMode $dnsProfile $torStrict $usbEnabled $usbReadOnly $ramOnly $toolsFile $usbLabel
 $action = Ask-Choice "Proceed?" @("Proceed", "Dry-run (show plan only)", "Cancel")
 if ($action -like "Dry-run*") { Write-Host "Dry-run complete. No changes applied." -ForegroundColor Yellow; exit 0 }
 if ($action -like "Cancel*") { throw "Cancelled" }
@@ -812,7 +825,7 @@ if ($leaveFreeMB -gt 0) {
 } else {
     $part = New-Partition -DiskNumber $diskNum -UseMaximumSize -AssignDriveLetter
 }
-Format-Volume -Partition $part -FileSystem exFAT -AllocationUnitSize 524288 -NewFileSystemLabel "GARGOYLE_SHARED" -Confirm:$false
+Format-Volume -Partition $part -FileSystem exFAT -AllocationUnitSize 524288 -NewFileSystemLabel $usbLabel -Confirm:$false
 
 $drive = $part.DriveLetter
 if ($drive) {

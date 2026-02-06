@@ -21,6 +21,28 @@ type NetResult struct {
 	Warnings []string
 }
 
+func PreLockFullAnon(cfg config.NetworkConfig) NetResult {
+	result := NetResult{}
+	if runtime.GOOS != "linux" {
+		result.Warnings = append(result.Warnings, "prelock: supported on Linux only (skip)")
+		return result
+	}
+
+	if err := setNetworking(false); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("prelock: disable network: %v", err))
+	}
+	if err := applyTorFirewall(cfg); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("prelock: tor firewall: %v", err))
+	} else {
+		result.Infos = append(result.Infos, "prelock: tor firewall applied")
+	}
+	if err := setNetworking(true); err != nil {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("prelock: enable network: %v", err))
+	}
+
+	return result
+}
+
 func ApplyNetwork(cfg config.NetworkConfig, home string) NetResult {
 	result := NetResult{}
 	if runtime.GOOS != "linux" {
@@ -78,6 +100,38 @@ func ApplyNetwork(cfg config.NetworkConfig, home string) NetResult {
 	result.Warnings = append(result.Warnings, warns...)
 
 	return result
+}
+
+func setNetworking(enabled bool) error {
+	state := "off"
+	if enabled {
+		state = "on"
+	}
+
+	if nmcli, err := exec.LookPath("nmcli"); err == nil {
+		cmd := exec.Command(nmcli, "networking", state)
+		return cmd.Run()
+	}
+
+	ipPath, err := exec.LookPath("ip")
+	if err != nil {
+		return errors.New("nmcli/ip not found")
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return err
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if enabled {
+			_ = exec.Command(ipPath, "link", "set", iface.Name, "up").Run()
+		} else {
+			_ = exec.Command(ipPath, "link", "set", iface.Name, "down").Run()
+		}
+	}
+	return nil
 }
 
 func applyDNS(profile, custom string) error {

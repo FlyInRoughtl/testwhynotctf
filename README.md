@@ -21,6 +21,7 @@ Gargoyle — переносимая изолированная среда для
 - Dependencies (best‑effort):
   - Windows: `powershell -ExecutionPolicy Bypass -File installers/windows/deps.ps1`
   - Linux: `bash installers/linux/deps.sh`
+- Harden (Linux, optional): `gargoyle harden enable`
 
 ## Что умеет (кратко)
 - TUI‑рабочий стол с подсказками и hotkeys
@@ -74,5 +75,8 @@ gargoyle install pack-osint --repo https://raw.githubusercontent.com/<org>/<repo
 
 ## Важные примечания
 - Linux поддерживается лучше (LUKS, iptables kill‑switch, USB watcher).
+- FullAnon на Linux включает pre‑lock: сеть выключается, затем ставится kill‑switch, и только потом сеть включается.
+- Даже с FullAnon есть «окно» до запуска Gargoyle (boot‑leak). Полностью закрывается только Live‑OS.
 - Windows: best‑effort, без LUKS и без системного forced‑Tor.
+- Windows‑ограничения: нет iptables‑kill‑switch, нет nmcli/hotspot/NAT, нет USB‑watcher, нет bubblewrap‑изоляции.
 - DNS не меняет внешний IP (это не VPN).

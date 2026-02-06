@@ -78,6 +78,15 @@ func Run(app string, args []string) int {
 			logger.Printf("start: %v", err)
 			return 1
 		}
+		if cfg.System.Mode == "fullanon" {
+			pre := system.PreLockFullAnon(cfg.Network)
+			for _, info := range pre.Infos {
+				logger.Printf("start: %s", info)
+			}
+			for _, warn := range pre.Warnings {
+				logger.Printf("start: %s", warn)
+			}
+		}
 		applyNet := *applyNetwork || cfg.System.Mode == "fullanon"
 		if applyNet {
 			result := system.ApplyNetwork(cfg.Network, homeDir)
@@ -137,6 +146,8 @@ func Run(app string, args []string) int {
 		return runSync(logger, cfg, svc, remaining[1:])
 	case "chat":
 		return runChat(logger, cfg, remaining[1:])
+	case "harden":
+		return runHarden(logger, remaining[1:])
 	case "doctor":
 		return runDoctor(logger, cfg)
 	case "update":
@@ -1496,6 +1507,44 @@ func runChat(logger *log.Logger, cfg config.Config, args []string) int {
 	return 0
 }
 
+func runHarden(logger *log.Logger, args []string) int {
+	if len(args) == 0 {
+		fmt.Println("harden: expected subcommand (enable|disable|status)")
+		return 2
+	}
+	switch args[0] {
+	case "enable":
+		result := system.HardenEnable()
+		for _, info := range result.Infos {
+			logger.Printf("harden: %s", info)
+		}
+		for _, warn := range result.Warnings {
+			logger.Printf("harden: %s", warn)
+		}
+		return 0
+	case "disable":
+		result := system.HardenDisable()
+		for _, info := range result.Infos {
+			logger.Printf("harden: %s", info)
+		}
+		for _, warn := range result.Warnings {
+			logger.Printf("harden: %s", warn)
+		}
+		return 0
+	case "status":
+		st, err := system.GetHardenStatus()
+		if err != nil {
+			logger.Printf("harden: %v", err)
+			return 1
+		}
+		fmt.Printf("harden: prelock=%v volatile_logs=%v\n", st.PrelockEnabled, st.VolatileLogs)
+		return 0
+	default:
+		fmt.Println("harden: expected subcommand (enable|disable|status)")
+		return 2
+	}
+}
+
 func runUpdate(logger *log.Logger, cfg config.Config, args []string) int {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	fs.SetOutput(os.Stdout)
@@ -1795,6 +1844,7 @@ func usage(app string) {
 	fmt.Println("  install pack-<name> [--repo URL] [--download-only]")
 	fmt.Println("  sync start|stop|status")
 	fmt.Println("  chat [--to host:port] [--alert] <message>")
+	fmt.Println("  harden enable|disable|status")
 	fmt.Println("  doctor")
 	fmt.Println("  update --url https://... --sha256 <sum> [--sig <sig_b64>] [--pub <pub_b64>]")
 	fmt.Println("  telegram start|stop|status")
