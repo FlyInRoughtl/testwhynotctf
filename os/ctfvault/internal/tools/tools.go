@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/shlex"
 	"gopkg.in/yaml.v3"
 )
 
@@ -110,7 +111,10 @@ func runInstall(install string) error {
 		return exec.Command("python", "-m", "pip", "install", pkg).Run()
 	case strings.HasPrefix(install, "cmd:"):
 		cmdline := strings.TrimPrefix(install, "cmd:")
-		parts := strings.Fields(cmdline)
+		parts, err := shlex.Split(cmdline)
+		if err != nil {
+			return err
+		}
 		if len(parts) == 0 {
 			return errors.New("empty cmd")
 		}
@@ -118,4 +122,47 @@ func runInstall(install string) error {
 	default:
 		return errors.New("unknown install prefix")
 	}
+}
+
+func DefaultPackPath(home, name string) string {
+	if name == "" {
+		name = "default"
+	}
+	file := name
+	if !strings.HasSuffix(file, ".yaml") && !strings.HasSuffix(file, ".yml") {
+		file += ".yaml"
+	}
+	return filepath.Join(home, "tools", "packs", file)
+}
+
+func ResolvePackPath(home, name string) (string, error) {
+	if name == "" {
+		return "", errors.New("pack name is empty")
+	}
+	if strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
+		path := name
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(home, path)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	path := DefaultPackPath(home, name)
+	if _, err := os.Stat(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func EnsurePack(path, name string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	content := fmt.Sprintf("pack: %s\ntools: []\n", name)
+	return os.WriteFile(path, []byte(content), 0600)
 }

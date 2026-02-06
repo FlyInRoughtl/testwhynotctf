@@ -1,46 +1,20 @@
-﻿# Requirements
+﻿# Requirements (кратко)
 
-Minimal:
-- Go 1.24+ (for building the CLI/TUI)
-- Network access to download Go modules (first build only)
+Минимум:
+- Go 1.24+ (сборка CLI/TUI)
+- Доступ к сети для скачивания Go‑модулей при первом билде
 
-Linux installer dependencies (for full USB layout):
-- whiptail (TUI wizard)
-- sgdisk (partitioning)
-- cryptsetup (LUKS2)
-- mkfs.ext4 (e2fsprogs)
-- mkfs.exfat (exfatprogs)
-- ufw (optional firewall profile)
-- iptables (Tor fail-closed profile)
-- lsblk (USB device scan)
+Linux wizard (USB/Full layout):
+- whiptail, sgdisk, cryptsetup, e2fsprogs, exfatprogs
+- iptables (Tor strict), network-manager (nmcli)
 
-Optional network tooling:
-- cloudflared (DoH proxy backend)
-- tor (always-on profile)
-- openvpn (VPN mode)
-- wireguard-tools (wg-quick)
-- curl (Tor leak check via SOCKS)
-- frpc (FRP client for tunnel)
-- postfix + dovecot (local mail server)
-- sing-box or xray or hiddify-cli (proxy mode)
-- avahi-utils (optional mDNS discovery if you switch from UDP broadcast)
-- wl-clipboard or xclip (clipboard share, Linux)
-- iproute2 (tun/tap setup)
+Полезные/опциональные:
+- tor, cloudflared (DoH), openvpn, wireguard-tools
+- frpc (FRP tunnel), postfix+dovecot (local mail)
+- sing-box/xray/hiddify (proxy mode)
+- bubblewrap + cage/gamescope/weston (EmulateEL privacy)
 
-Optional (later stages):
-- QEMU/KVM for VM mode
-- live-build, squashfs-tools, xorriso (Live-USB build)
+Windows (опционально):
+- VeraCrypt или BitLocker To Go
 
-EmulateEL (Linux GUI apps):
-- X11/Wayland desktop
-- firefox / torbrowser-launcher / xdg-open (optional)
-- bubblewrap (privacy mode sandbox, best-effort)
-- cage / gamescope / weston (optional anti-capture display server)
-
-Windows extras:
-- VeraCrypt (optional encrypted container)
-
-Quick start:
-- Windows: run installers/windows/bootstrap.cmd
-- Linux:   run installers/linux/bootstrap.sh
-
+Live‑OS/ISO: отложено (v5+)

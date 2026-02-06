@@ -33,9 +33,11 @@ func RunDoctor(cfg config.Config) []CheckResult {
 		checkBin(add, "tor")
 		checkBin(add, "iptables")
 		checkBin(add, "ufw")
+		checkBin(add, "frpc")
 		checkBin(add, "openvpn")
 		checkBin(add, "wg-quick")
 		checkBin(add, "bwrap")
+		checkBin(add, "bubblewrap")
 		checkBin(add, "cloudflared")
 		checkBin(add, "nmcli")
 		if cfg.Mesh.TunEnabled {
@@ -49,6 +51,7 @@ func RunDoctor(cfg config.Config) []CheckResult {
 	} else if runtime.GOOS == "windows" {
 		checkBin(add, "tor.exe")
 		checkBin(add, "veracrypt")
+		checkBin(add, "frpc.exe")
 	}
 
 	if cfg.Network.Mode == "vpn" && cfg.Network.VPNType != "" {

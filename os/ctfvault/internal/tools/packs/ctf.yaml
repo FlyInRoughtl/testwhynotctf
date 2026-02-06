@@ -1,0 +1,20 @@
+pack: ctf
+tools:
+  - name: nmap
+    install: "apt:nmap"
+  - name: sqlmap
+    install: "apt:sqlmap"
+  - name: ffuf
+    install: "apt:ffuf"
+  - name: gobuster
+    install: "apt:gobuster"
+  - name: gdb
+    install: "apt:gdb"
+  - name: radare2
+    install: "apt:radare2"
+  - name: binwalk
+    install: "apt:binwalk"
+  - name: exiftool
+    install: "apt:exiftool"
+  - name: wireshark-cli
+    install: "apt:tshark"

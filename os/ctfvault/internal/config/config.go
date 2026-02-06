@@ -21,6 +21,7 @@ type Config struct {
 	Tools    ToolsConfig    `yaml:"tools"`
 	Update   UpdateConfig   `yaml:"update"`
 	Telegram TelegramConfig `yaml:"telegram"`
+	Sync     SyncConfig     `yaml:"sync"`
 }
 
 type SystemConfig struct {
@@ -28,6 +29,7 @@ type SystemConfig struct {
 	CPULimit   int    `yaml:"cpu_limit"`
 	Locale     string `yaml:"locale"`
 	Edition    string `yaml:"edition"`
+	Mode       string `yaml:"mode"`
 }
 
 type StorageConfig struct {
@@ -83,12 +85,18 @@ type MeshConfig struct {
 	DiscoveryKey     string `yaml:"discovery_key"`
 	AutoJoin         bool   `yaml:"auto_join"`
 	ChatEnabled      bool   `yaml:"chat_enabled"`
+	ChatListen       string `yaml:"chat_listen"`
+	ChatPSK          string `yaml:"chat_psk"`
+	ChatPSKFile      string `yaml:"chat_psk_file"`
 	ClipboardShare   bool   `yaml:"clipboard_share"`
 	ClipboardWarn    bool   `yaml:"clipboard_warn"`
 	TunEnabled       bool   `yaml:"tun_enabled"`
 	TunDevice        string `yaml:"tun_device"`
 	TunCIDR          string `yaml:"tun_cidr"`
 	TunPeerCIDR      string `yaml:"tun_peer_cidr"`
+	OnionOnly        bool   `yaml:"onion_only"`
+	RelayAllowlist   []string `yaml:"relay_allowlist"`
+	Hotspot          HotspotConfig `yaml:"hotspot"`
 }
 
 type EmulateConfig struct {
@@ -127,6 +135,7 @@ type UIConfig struct {
 type ToolsConfig struct {
 	File        string `yaml:"file"`
 	AutoInstall bool   `yaml:"auto_install"`
+	Repository  string `yaml:"repository"`
 }
 
 type UpdateConfig struct {
@@ -134,6 +143,24 @@ type UpdateConfig struct {
 	Channel   string `yaml:"channel"`
 	PublicKey string `yaml:"public_key"`
 	Auto      bool   `yaml:"auto"`
+}
+
+type HotspotConfig struct {
+	SSID     string `yaml:"ssid"`
+	Password string `yaml:"password"`
+	Ifname   string `yaml:"ifname"`
+	Shared   bool   `yaml:"shared"`
+}
+
+type SyncConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	Target       string `yaml:"target"`
+	Dir          string `yaml:"dir"`
+	PSK          string `yaml:"psk"`
+	PSKFile      string `yaml:"psk_file"`
+	Transport    string `yaml:"transport"`
+	PaddingBytes int    `yaml:"padding_bytes"`
+	Depth        int    `yaml:"depth"`
 }
 
 type TelegramConfig struct {
@@ -148,12 +175,13 @@ type TelegramConfig struct {
 
 func DefaultConfig() Config {
 	return Config{
-		System: SystemConfig{
-			RamLimitMB: 2048,
-			CPULimit:   2,
-			Locale:     "ru",
-			Edition:    "public",
-		},
+	System: SystemConfig{
+		RamLimitMB: 2048,
+		CPULimit:   2,
+		Locale:     "ru",
+		Edition:    "public",
+		Mode:       "standard",
+	},
 		Storage: StorageConfig{
 			Persistent:        true,
 			Shared:            false,
@@ -193,24 +221,35 @@ func DefaultConfig() Config {
 			IdentityLength:  256,
 			IdentityGroup:   15,
 		},
-		Mesh: MeshConfig{
-			RelayURL:      "",
-			OnionDepth:    3,
-			MetadataLevel: "standard",
-			Transport:     "tls",
-			PaddingBytes:  256,
-			DiscoveryEnabled: false,
-			DiscoveryPort:    19998,
-			DiscoveryKey:     "",
-			AutoJoin:         false,
-			ChatEnabled:      true,
-			ClipboardShare:   false,
-			ClipboardWarn:    true,
-			TunEnabled:       false,
-			TunDevice:        "gargoyle0",
-			TunCIDR:          "10.42.0.1/24",
-			TunPeerCIDR:      "10.42.0.0/24",
+	Mesh: MeshConfig{
+		RelayURL:      "",
+		OnionDepth:    3,
+		MetadataLevel: "standard",
+		Transport:     "tls",
+		PaddingBytes:  256,
+		DiscoveryEnabled: false,
+		DiscoveryPort:    19998,
+		DiscoveryKey:     "",
+		AutoJoin:         false,
+		ChatEnabled:      true,
+		ChatListen:       ":19997",
+		ChatPSK:          "",
+		ChatPSKFile:      "",
+		ClipboardShare:   false,
+		ClipboardWarn:    true,
+		TunEnabled:       false,
+		TunDevice:        "gargoyle0",
+		TunCIDR:          "10.42.0.1/24",
+		TunPeerCIDR:      "10.42.0.0/24",
+		OnionOnly:        false,
+		RelayAllowlist:   nil,
+		Hotspot: HotspotConfig{
+			SSID:     "",
+			Password: "",
+			Ifname:   "",
+			Shared:   true,
 		},
+	},
 		Emulate: EmulateConfig{
 			PrivacyMode:  true,
 			TempDir:      "ram",
@@ -243,23 +282,34 @@ func DefaultConfig() Config {
 		Tools: ToolsConfig{
 			File:        "tools.yaml",
 			AutoInstall: false,
+			Repository:  "",
 		},
-		Update: UpdateConfig{
-			URL:       "",
-			Channel:   "stable",
-			PublicKey: "",
-			Auto:      false,
-		},
-		Telegram: TelegramConfig{
-			Enabled:       false,
-			BotToken:      "",
-			AllowedUserID: 0,
-			PairingTTL:    60,
-			AllowCLI:      false,
-			AllowWipe:     false,
-			AllowStats:    true,
-		},
-	}
+	Update: UpdateConfig{
+		URL:       "",
+		Channel:   "stable",
+		PublicKey: "",
+		Auto:      false,
+	},
+	Sync: SyncConfig{
+		Enabled:      false,
+		Target:       "",
+		Dir:          "./loot",
+		PSK:          "",
+		PSKFile:      "",
+		Transport:    "tls",
+		PaddingBytes: 256,
+		Depth:        3,
+	},
+	Telegram: TelegramConfig{
+		Enabled:       false,
+		BotToken:      "",
+		AllowedUserID: 0,
+		PairingTTL:    60,
+		AllowCLI:      false,
+		AllowWipe:     false,
+		AllowStats:    true,
+	},
+}
 }
 
 func Load(path string) (Config, error) {
@@ -326,6 +376,9 @@ func validate(cfg Config) error {
 	if cfg.Mesh.DiscoveryPort < 0 || cfg.Mesh.DiscoveryPort > 65535 {
 		return errors.New("mesh.discovery_port must be 0..65535")
 	}
+	if cfg.Mesh.ChatListen == "" {
+		return errors.New("mesh.chat_listen is required")
+	}
 	if cfg.Mesh.TunEnabled {
 		if cfg.Mesh.TunDevice == "" {
 			return errors.New("mesh.tun_device is required when tun_enabled=true")
@@ -372,6 +425,9 @@ func validate(cfg Config) error {
 	if cfg.UI.Theme == "" {
 		return errors.New("ui.theme is required")
 	}
+	if strings.ContainsAny(cfg.Tools.Repository, "\r\n") {
+		return errors.New("tools.repository contains invalid characters")
+	}
 	if cfg.Security.IdentityLength != 256 {
 		return errors.New("security.identity_length must be 256")
 	}
@@ -391,6 +447,11 @@ func validate(cfg Config) error {
 	case "", "direct", "vpn", "gateway", "proxy":
 	default:
 		return errors.New("network.mode must be direct|vpn|gateway|proxy")
+	}
+	switch cfg.System.Mode {
+	case "", "standard", "fullanon":
+	default:
+		return errors.New("system.mode must be standard|fullanon")
 	}
 	switch cfg.Network.VPNType {
 	case "", "openvpn", "wireguard":
@@ -430,6 +491,15 @@ func validate(cfg Config) error {
 	}
 	if cfg.Telegram.PairingTTL < 0 || cfg.Telegram.PairingTTL > 3600 {
 		return errors.New("telegram.pairing_ttl must be 0..3600")
+	}
+	if cfg.Sync.Depth < 1 || cfg.Sync.Depth > 10 {
+		return errors.New("sync.depth must be 1..10")
+	}
+	if cfg.Sync.PaddingBytes < 0 {
+		return errors.New("sync.padding_bytes must be >= 0")
+	}
+	if cfg.Sync.Transport != "" && cfg.Sync.Transport != "tcp" && cfg.Sync.Transport != "tls" {
+		return errors.New("sync.transport must be tcp|tls")
 	}
 	return nil
 }

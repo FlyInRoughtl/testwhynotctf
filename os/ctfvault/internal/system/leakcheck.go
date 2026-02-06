@@ -26,7 +26,7 @@ func leakCheck(mode string, tor bool) ([]string, []string) {
 		} else if ip != "" {
 			infos = append(infos, "leakcheck: tor ip="+ip)
 		}
-	} else if mode == "vpn" || mode == "proxy" {
+	} else {
 		ip, err := httpGetText(ctx, "https://api.ipify.org")
 		if err != nil {
 			warns = append(warns, "leakcheck: ipify failed: "+err.Error())

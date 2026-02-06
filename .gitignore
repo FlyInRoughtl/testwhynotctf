@@ -2,3 +2,29 @@
 .gomodcache/
 *.go.*
 os/liveusb/build/
+os/liveusb
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*.tmp
+*.bak
+installer.log
+
+# build/artifacts
+bin/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.iso
+*.img
+*.qcow2
+*.vmdk
+*.vdi
+*.zip
+*.tar
+*.tgz

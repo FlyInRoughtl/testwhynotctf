@@ -1,114 +1,29 @@
-﻿GARGOYLE — методичка (help-gargoyle)
-
-О системе
-- Gargoyle — изолированная среда для CTF/лабораторных задач.
-- Фокус: приватность внутри окружения, удобство работы, минимум внешних зависимостей.
-- Абсолютную анонимность не обещаем: это best-effort модель для CTF-рисков.
+﻿GARGOYLE — help (кратко)
 
 Быстрый старт
-1) Установить через wizard (USB или папка).
-2) Запустить: gargoyle start --tui
-3) Проверить статус: gargoyle status
-4) Помощь по командам: gargoyle help
-5) Полная методичка: gargoyle help-gargoyle
+1) Wizard (USB/Folder)
+2) gargoyle start --tui
+3) gargoyle status
+4) gargoyle help
 
-Домашняя директория
-- По умолчанию: ~/.gargoyle
-- Переопределить: GARGOYLE_HOME=/path
+Основные команды
+- start | stop | status | init
+- mesh send|recv|chat|clipboard|discover|advertise|tun|gateway
+- relay | hub | tunnel | mail | proxy | hotspot
+- emulate run|stop|status (Linux)
+- tools list|install|edit
+- install pack-<name> [--repo URL]
+- doctor | update | telegram | profile | wipe
+  update: --sha256 <sum> --sig <sig_b64> --pub <pub_b64>
 
-Конфиг
-- Файл: gargoyle.yaml (по умолчанию в home)
-- Пример: gargoyle.yaml.example
-- Секции: system, storage, network, security, mesh, ui, emulate, tunnel, mail.
+Tools packs
+Встроенные: ctf, ctf_emulate, anonymity, osint, empty
 
-USB/Память (рекомендованный layout)
-1) EFI/BOOT (FAT32) ~512MB
-2) SYSTEM (ext4 RO) или squashfs
-3) PERSISTENT (LUKS2 + ext4)
-4) SHARED (exFAT)
-Можно оставить свободное место в конце.
-
-CLI команды (основное)
-- gargoyle start [--tui] [--apply-network]
-- gargoyle stop
-- gargoyle status
-- gargoyle init [--force]
-- gargoyle version
-
-Mesh/Relay (обмен файлами)
-- gargoyle mesh up|status
-- gargoyle mesh send <src> <dst> --to host:port [--security] [--psk/--psk-file] [--transport tcp|tls] [--pad N]
-- gargoyle mesh recv --listen :19999 --out ./downloads [--transport tcp|tls]
-- gargoyle mesh discover|advertise
-- gargoyle mesh chat send|listen
-- gargoyle mesh clipboard send|listen
-- gargoyle mesh tun serve|connect
-- gargoyle relay --listen :18080
- - mesh.padding_bytes: padding после заголовка (уменьшает fingerprinting)
-
-DoH
-- gargoyle doh --listen 127.0.0.1:5353 --url https://.../dns-query
-
-EmulateEL (Linux GUI)
-- gargoyle emulate run <app> [args...]
-- gargoyle emulate stop
-- gargoyle emulate status
- - emulate.display_server: direct|cage|gamescope|weston (best-effort anti-capture)
-
-Resource Hub
-- gargoyle hub start --listen 127.0.0.1:8080
-- gargoyle hub stop
-- gargoyle hub status
-
-Tunnel (FRP)
-- gargoyle tunnel expose <service> <port> [token] [--local-ip 127.0.0.1]
-- gargoyle tunnel stop
-- gargoyle tunnel status
- - gargoyle tunnel wss-serve --listen :8443 --public :8080 --service web --token <token>
- - gargoyle tunnel wss-connect --server wss://host:8443 --service web --token <token> --local 127.0.0.1:8080
-
-Mail (локальная почта/SMTP sink + mesh-mail)
-- gargoyle mail start --mode local|tunnel
-- gargoyle mail stop
-- gargoyle mail status
-- gargoyle mail send --to user@host --mesh host:port [--file body.txt]
-
-Proxy service
-- gargoyle proxy start --engine sing-box|xray|hiddify --config /path/config.json
-- gargoyle proxy stop
-- gargoyle proxy status
-
-Tools/Doctor/Update
-- gargoyle tools list|install|edit
-- gargoyle doctor
-- gargoyle update --url https://... --sha256 <sum>
-
-Telegram C2
-- gargoyle telegram start|stop|status
-
-Gateway (best-effort)
-- gargoyle gateway start --wan wlan0
-- gargoyle gateway stop
-
-Gargoyle Script (DSL)
-- Запуск: gargoyle script run ./scripts/sample.gsl
-- Команды: net.apply, mesh.send/mesh.recv, relay.start/stop, tunnel.expose,
-  mail.start/stop, proxy.start/stop, hub.start, emulate.run и др.
-
-Приватность (CTF-safe)
-- Tor strict (iptables, Linux) — блокирует non-Tor трафик.
-- Leak-check — проверка IP/DNS после старта Tor/VPN.
-- MAC randomization, закрытые порты по умолчанию.
-- RAM-only session — без записи на диск.
-
-USB режимы
-- usb_enabled: доступ к внешним USB внутри Gargoyle.
-- usb_read_only: только чтение (рекомендуется).
-
-Wipe
-- gargoyle wipe
-- gargoyle wipe --emergency (сохраняет identity key)
+Конфиг/дом
+- По умолчанию: ~/.gargoyle (Linux) / %USERPROFILE%\.gargoyle (Windows)
+- Конфиг: gargoyle.yaml
 
 Важно
-- Linux поддерживается лучше (LUKS, iptables, USB watcher).
-- Никакая система не дает 100% анонимности. Gargoyle — best-effort.
+- Анонимность best‑effort.
+- Tor strict (Linux) = iptables kill‑switch.
+- Live‑OS/ISO отложено (v5+).

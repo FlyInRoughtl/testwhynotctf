@@ -1,0 +1,18 @@
+pack: ctf_emulate
+tools:
+  - name: nmap
+    install: "apt:nmap"
+  - name: sqlmap
+    install: "apt:sqlmap"
+  - name: ffuf
+    install: "apt:ffuf"
+  - name: gdb
+    install: "apt:gdb"
+  - name: radare2
+    install: "apt:radare2"
+  - name: torbrowser-launcher
+    install: "apt:torbrowser-launcher"
+  - name: firefox-esr
+    install: "apt:firefox-esr"
+  - name: bubblewrap
+    install: "apt:bubblewrap"

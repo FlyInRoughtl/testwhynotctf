@@ -1,15 +1,4 @@
-# os/
+﻿# os/
 
-This folder will contain the OS build definitions, base image scripts, and runtime services for Gargoyle.
-
-Planned areas:
-- base/ (rootfs, packages)
-- services/ (network, storage, wipe)
-- ui/ (TUI shell)
-- mesh/ (relay, onion routing)
-- liveusb/ (live-build pipeline)
-
-See SPEC.md for details.
-
-Current MVP code lives in `os/ctfvault` (Go CLI/TUI prototype).
-
+Заготовки для Live‑OS. Pipeline отложен до v5+.
+Текущий рабочий код — в `os/ctfvault` (CLI/TUI на хост‑ОС).

@@ -4,6 +4,29 @@ All notable changes to Gargoyle will be documented in this file.
 
 ## [Unreleased]
 
+## [3.1.3r] - 2026-02-06
+### Added
+- FullAnon profile (Tor always-on + kill-switch via iptables).
+- Hotspot/NAT helper (NetworkManager shared mode, Linux).
+- Mesh gateway (local TCP forwarder to upstream tunnel).
+- Loot sync (fsnotify watcher -> mesh send).
+- TUI screens for hotspot/gateway/sync/broadcast.
+- TUI help overlay (`?`) and updated hints.
+- Wizard option for FullAnon mode (system.mode).
+- Wizard language selection (ru/en) and advanced privacy/mesh toggles on Windows.
+- Relay allowlist support (token list).
+- Tools pack editing and external pack files.
+### Tests
+- Added basic unit tests for config/tools/mesh/syncer packages.
+### Fixed
+- WSS random ID now checks crypto entropy errors.
+- Update downloader has HTTP timeouts.
+- Tools `cmd:` parsing honors quotes (shlex).
+- TUN nonce derivation fixed.
+### Changed
+- Windows update uses helper wrapper (no manual rename).
+- Documentation updated; Live-OS deferred to v5+.
+
 ## [2.1b] - 2026-02-05
 ### Added
 - Mesh TLS transport with optional header padding to reduce fingerprinting.

@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+LOG_FILE="${LOG_FILE:-installer.log}"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "[installer] log: $LOG_FILE"
+
 use_whiptail=false
 if command -v whiptail >/dev/null 2>&1; then
   use_whiptail=true
@@ -56,15 +60,80 @@ prompt_input() {
   fi
 }
 
+prompt_advanced() {
+  if $use_whiptail; then
+    local choice
+    choice=$(whiptail --title "Advanced settings" --menu "Open advanced settings?" 12 60 2 \
+      "continue" "Proceed with defaults" \
+      "advanced" "Open advanced settings" 3>&1 1>&2 2>&3)
+    [ "$choice" = "advanced" ] && echo "yes" || echo "no"
+  else
+    read -rp "Press A for Advanced or Enter to continue: " ans
+    ans=$(echo "$ans" | tr '[:lower:]' '[:upper:]')
+    [ "$ans" = "A" ] && echo "yes" || echo "no"
+  fi
+}
+
+yaml_list_flow() {
+  local raw="$1"
+  if [ -z "$raw" ]; then
+    printf "[]"
+    return
+  fi
+  local out="["
+  IFS=',;' read -ra items <<< "$raw"
+  local first=1
+  for item in "${items[@]}"; do
+    item=$(echo "$item" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    [ -z "$item" ] && continue
+    if [ $first -eq 0 ]; then
+      out+=","
+    fi
+    out+="\"$item\""
+    first=0
+  done
+  out+="]"
+  printf "%s" "$out"
+}
+
+print_plan() {
+  local target="$1"
+  local location="$2"
+  local layout="$3"
+  local sys="$4"
+  local persist="$5"
+  local free="$6"
+  local cluster="$7"
+  echo ""
+  echo "===== INSTALL PLAN ====="
+  echo "Target: $target"
+  echo "Location: $location"
+  [ -n "$layout" ] && echo "USB layout: $layout"
+  [ -n "$sys" ] && echo "SYSTEM size: $sys MB"
+  [ -n "$persist" ] && echo "PERSIST size: $persist MB"
+  [ -n "$free" ] && echo "Free space: $free MB"
+  [ -n "$cluster" ] && echo "exFAT cluster: ${cluster} KB"
+  echo "Edition: $edition"
+  echo "Mode: $op_mode"
+  echo "DNS: $dns_profile"
+  echo "Tor strict: $tor_strict"
+  echo "USB enabled: $usb_enabled, USB read-only: $usb_read_only"
+  echo "RAM-only: $ram_only"
+  echo "Tools pack: $tools_file (auto_install=$tools_auto)"
+  echo "========================"
+  echo ""
+}
+
 write_config() {
-  local path="$1" edition="$2" dns_profile="$3" dns_custom="$4" wifi="$5" bt="$6" ports="$7" usb_enabled="$8" usb_read_only="$9" ram_only="${10}" net_mode="${11}" vpn_type="${12}" vpn_profile="${13}" gateway_ip="${14}" tor_install="${15}" tor_strict="${16}" proxy_engine="${17}" proxy_config="${18}"
+  local path="$1" edition="$2" op_mode="$3" locale="$4" ram_limit="$5" cpu_limit="$6" dns_profile="$7" dns_custom="$8" wifi="$9" bt="${10}" ports="${11}" usb_enabled="${12}" usb_read_only="${13}" ram_only="${14}" net_mode="${15}" vpn_type="${16}" vpn_profile="${17}" gateway_ip="${18}" proxy_engine="${19}" proxy_config="${20}" tor_install="${21}" tor_strict="${22}" tor_trans_port="${23}" tor_dns_port="${24}" tor_use_bridges="${25}" tor_transport="${26}" tor_bridge_lines="${27}" torrc_path="${28}" mac_spoof="${29}" mesh_onion="${30}" mesh_discovery="${31}" mesh_discovery_port="${32}" mesh_discovery_key="${33}" mesh_auto_join="${34}" mesh_chat="${35}" mesh_chat_listen="${36}" mesh_chat_psk="${37}" mesh_chat_psk_file="${38}" mesh_clipboard="${39}" mesh_clipboard_warn="${40}" mesh_tun_enabled="${41}" mesh_tun_device="${42}" mesh_tun_cidr="${43}" mesh_tun_peer_cidr="${44}" mesh_padding="${45}" mesh_transport="${46}" mesh_metadata="${47}" mesh_onion_depth="${48}" mesh_relay_allowlist="${49}" hotspot_ssid="${50}" hotspot_password="${51}" hotspot_ifname="${52}" hotspot_shared="${53}" emulate_privacy="${54}" emulate_temp="${55}" emulate_downloads="${56}" emulate_display="${57}" tunnel_type="${58}" tunnel_server="${59}" tunnel_token="${60}" tunnel_local_ip="${61}" mail_mode="${62}" mail_sink="${63}" mail_local="${64}" mail_sink_listen="${65}" mail_sink_ui="${66}" mail_mesh_enabled="${67}" mail_mesh_listen="${68}" mail_mesh_psk="${69}" mail_mesh_psk_file="${70}" ui_theme="${71}" ui_boss_key="${72}" ui_boss_mode="${73}" tools_file="${74}" tools_auto="${75}" tools_repo="${76}" update_url="${77}" update_channel="${78}" update_public_key="${79}" update_auto="${80}" sync_enabled="${81}" sync_target="${82}" sync_dir="${83}" sync_psk="${84}" sync_psk_file="${85}" sync_transport="${86}" sync_padding="${87}" sync_depth="${88}" telegram_enabled="${89}" telegram_bot_token="${90}" telegram_allowed_user="${91}" telegram_pairing_ttl="${92}" telegram_allow_cli="${93}" telegram_allow_wipe="${94}" telegram_allow_stats="${95}" doh_url="${96}" doh_listen="${97}"
   cat > "$path" <<EOF
 # Gargoyle config
 system:
-  ram_limit_mb: 2048
-  cpu_limit: 2
-  locale: "ru"
+  ram_limit_mb: $ram_limit
+  cpu_limit: $cpu_limit
+  locale: "$locale"
   edition: "$edition"
+  mode: "$op_mode"
 
 storage:
   persistent: true
@@ -84,12 +153,18 @@ network:
   proxy_config: "$proxy_config"
   dns_profile: "$dns_profile"
   dns_custom: "$dns_custom"
-  doh_url: ""
-  doh_listen: "127.0.0.1:5353"
+  doh_url: "$doh_url"
+  doh_listen: "$doh_listen"
   tor: $tor_install
   tor_always_on: $tor_install
   tor_strict: $tor_strict
-  mac_spoof: true
+  tor_trans_port: $tor_trans_port
+  tor_dns_port: $tor_dns_port
+  tor_use_bridges: $tor_use_bridges
+  tor_transport: "$tor_transport"
+  tor_bridge_lines: $tor_bridge_lines
+  torrc_path: "$torrc_path"
+  mac_spoof: $mac_spoof
   wifi_enabled: $wifi
   bluetooth_enabled: $bt
   ports_open: $ports
@@ -101,36 +176,90 @@ security:
 
 mesh:
   relay_url: ""
-  onion_depth: 3
-  metadata_level: "standard"
-  transport: "tls"
-  padding_bytes: 256
+  onion_depth: $mesh_onion_depth
+  metadata_level: "$mesh_metadata"
+  transport: "$mesh_transport"
+  padding_bytes: $mesh_padding
+  discovery_enabled: $mesh_discovery
+  discovery_port: $mesh_discovery_port
+  discovery_key: "$mesh_discovery_key"
+  auto_join: $mesh_auto_join
+  chat_enabled: $mesh_chat
+  chat_listen: "$mesh_chat_listen"
+  chat_psk: "$mesh_chat_psk"
+  chat_psk_file: "$mesh_chat_psk_file"
+  clipboard_share: $mesh_clipboard
+  clipboard_warn: $mesh_clipboard_warn
+  tun_enabled: $mesh_tun_enabled
+  tun_device: "$mesh_tun_device"
+  tun_cidr: "$mesh_tun_cidr"
+  tun_peer_cidr: "$mesh_tun_peer_cidr"
+  onion_only: $mesh_onion
+  relay_allowlist: $mesh_relay_allowlist
+  hotspot:
+    ssid: "$hotspot_ssid"
+    password: "$hotspot_password"
+    ifname: "$hotspot_ifname"
+    shared: $hotspot_shared
 
 ui:
-  theme: "dark"
-  language: "ru"
+  theme: "$ui_theme"
+  language: "$locale"
+  boss_key: $ui_boss_key
+  boss_mode: "$ui_boss_mode"
 
 emulate:
-  privacy_mode: true
-  temp_dir: "ram"
-  downloads_dir: "downloads"
+  privacy_mode: $emulate_privacy
+  temp_dir: "$emulate_temp"
+  downloads_dir: "$emulate_downloads"
+  display_server: "$emulate_display"
 
 tunnel:
-  type: "frp"
-  server: ""
-  token: ""
-  local_ip: "127.0.0.1"
+  type: "$tunnel_type"
+  server: "$tunnel_server"
+  token: "$tunnel_token"
+  local_ip: "$tunnel_local_ip"
 
 mail:
-  mode: "local"
-  sink: true
-  local_server: true
-  sink_listen: "127.0.0.1:1025"
-  sink_ui: "127.0.0.1:8025"
-  mesh_enabled: true
-  mesh_listen: ":20025"
-  mesh_psk: ""
-  mesh_psk_file: ""
+  mode: "$mail_mode"
+  sink: $mail_sink
+  local_server: $mail_local
+  sink_listen: "$mail_sink_listen"
+  sink_ui: "$mail_sink_ui"
+  mesh_enabled: $mail_mesh_enabled
+  mesh_listen: "$mail_mesh_listen"
+  mesh_psk: "$mail_mesh_psk"
+  mesh_psk_file: "$mail_mesh_psk_file"
+
+tools:
+  file: "$tools_file"
+  auto_install: $tools_auto
+  repository: "$tools_repo"
+
+update:
+  url: "$update_url"
+  channel: "$update_channel"
+  public_key: "$update_public_key"
+  auto: $update_auto
+
+sync:
+  enabled: $sync_enabled
+  target: "$sync_target"
+  dir: "$sync_dir"
+  psk: "$sync_psk"
+  psk_file: "$sync_psk_file"
+  transport: "$sync_transport"
+  padding_bytes: $sync_padding
+  depth: $sync_depth
+
+telegram:
+  enabled: $telegram_enabled
+  bot_token: "$telegram_bot_token"
+  allowed_user_id: $telegram_allowed_user
+  pairing_ttl: $telegram_pairing_ttl
+  allow_cli: $telegram_allow_cli
+  allow_wipe: $telegram_allow_wipe
+  allow_stats: $telegram_allow_stats
 EOF
 }
 
@@ -213,10 +342,10 @@ apply_usb_layout() {
     shared_end="-$free_mb"M
   fi
   if ! [[ "$cluster_kb" =~ ^[0-9]+$ ]]; then
-    cluster_kb=256
+    cluster_kb=512
   fi
   if [ "$cluster_kb" -lt 4 ]; then
-    cluster_kb=256
+    cluster_kb=512
   fi
   local cluster_sectors=$((cluster_kb * 2))
 
@@ -233,7 +362,7 @@ apply_usb_layout() {
   sudo cryptsetup open "${dev}3" gargoyle_persist
   sudo mkfs.ext4 -L GARGOYLE_PERSIST /dev/mapper/gargoyle_persist
 
-  # exFAT cluster size: cluster_kb (default 256KB)
+  # exFAT cluster size: cluster_kb (default 512KB)
   sudo mkfs.exfat -s "$cluster_sectors" -n GARGOYLE_SHARED "${dev}4" || sudo mkfs.exfat -n GARGOYLE_SHARED "${dev}4"
 
   sudo mkdir -p /mnt/gargoyle_persist
@@ -255,10 +384,10 @@ apply_usb_shared_layout() {
     end="-$free_mb"M
   fi
   if ! [[ "$cluster_kb" =~ ^[0-9]+$ ]]; then
-    cluster_kb=256
+    cluster_kb=512
   fi
   if [ "$cluster_kb" -lt 4 ]; then
-    cluster_kb=256
+    cluster_kb=512
   fi
   local cluster_sectors=$((cluster_kb * 2))
 
@@ -271,6 +400,97 @@ apply_usb_shared_layout() {
   sudo mkdir -p /mnt/gargoyle_shared/gargoyle/{data,downloads,logs,keys,shared,scripts}
 }
 
+write_pack_file() {
+  local base="$1"
+  local name="$2"
+  local path="$base/tools/packs/$name.yaml"
+  mkdir -p "$(dirname "$path")"
+  case "$name" in
+    ctf)
+      cat > "$path" <<'EOF'
+pack: ctf
+tools:
+  - name: nmap
+    install: "apt:nmap"
+  - name: sqlmap
+    install: "apt:sqlmap"
+  - name: ffuf
+    install: "apt:ffuf"
+  - name: gobuster
+    install: "apt:gobuster"
+  - name: gdb
+    install: "apt:gdb"
+  - name: radare2
+    install: "apt:radare2"
+  - name: binwalk
+    install: "apt:binwalk"
+  - name: exiftool
+    install: "apt:exiftool"
+  - name: wireshark-cli
+    install: "apt:tshark"
+EOF
+      ;;
+    anonymity)
+      cat > "$path" <<'EOF'
+pack: anonymity
+tools:
+  - name: tor
+    install: "apt:tor"
+  - name: proxychains4
+    install: "apt:proxychains4"
+  - name: dnsutils
+    install: "apt:dnsutils"
+EOF
+      ;;
+    ctf_emulate)
+      cat > "$path" <<'EOF'
+pack: ctf_emulate
+tools:
+  - name: nmap
+    install: "apt:nmap"
+  - name: sqlmap
+    install: "apt:sqlmap"
+  - name: ffuf
+    install: "apt:ffuf"
+  - name: gdb
+    install: "apt:gdb"
+  - name: radare2
+    install: "apt:radare2"
+  - name: torbrowser-launcher
+    install: "apt:torbrowser-launcher"
+  - name: firefox-esr
+    install: "apt:firefox-esr"
+  - name: bubblewrap
+    install: "apt:bubblewrap"
+EOF
+      ;;
+    osint)
+      cat > "$path" <<'EOF'
+pack: osint
+tools:
+  - name: whois
+    install: "apt:whois"
+  - name: dnsutils
+    install: "apt:dnsutils"
+  - name: curl
+    install: "apt:curl"
+  - name: wget
+    install: "apt:wget"
+  - name: nmap
+    install: "apt:nmap"
+  - name: exiftool
+    install: "apt:exiftool"
+EOF
+      ;;
+    empty)
+      cat > "$path" <<'EOF'
+pack: empty
+tools: []
+EOF
+      ;;
+  esac
+}
+
 main() {
   echo "Gargoyle Installer Wizard (Linux)"
 
@@ -279,6 +499,15 @@ main() {
 
   local edition
   edition=$(prompt_menu "Edition" "public" "private")
+
+  local op_mode
+  op_mode=$(prompt_menu "Operation mode" "standard" "fullanon")
+
+  local locale
+  locale=$(prompt_menu "Language" "ru" "en")
+
+  local ram_limit=2048
+  local cpu_limit=2
 
   local dns_profile
   dns_profile=$(prompt_menu "DNS profile" "system" "xbox" "custom")
@@ -306,47 +535,271 @@ main() {
   local ram_only
   ram_only=$(prompt_yesno "RAM-only session (no disk writes)?" "no")
 
-  local net_mode vpn_type vpn_profile gateway_ip tor_install
-  net_mode=$(prompt_menu "Network mode" "direct" "vpn" "gateway" "proxy")
+  local net_mode vpn_type vpn_profile gateway_ip tor_install tor_strict
   vpn_type=""
   vpn_profile=""
   gateway_ip=""
   proxy_engine=""
   proxy_config=""
-  if [ "$net_mode" = "vpn" ]; then
-    vpn_type=$(prompt_menu "VPN type" "openvpn" "wireguard")
-    while true; do
-      vpn_profile=$(prompt_input "VPN profile path" "")
-      [ -n "$vpn_profile" ] && break
-      echo "VPN profile path is required for vpn mode"
-    done
+  local doh_url=""
+  local doh_listen="127.0.0.1:5353"
+  if [ "$op_mode" = "fullanon" ]; then
+    net_mode="direct"
+    tor_install="yes"
+    tor_strict="yes"
+  else
+    net_mode=$(prompt_menu "Network mode" "direct" "vpn" "gateway" "proxy")
+    if [ "$net_mode" = "vpn" ]; then
+      vpn_type=$(prompt_menu "VPN type" "openvpn" "wireguard")
+      while true; do
+        vpn_profile=$(prompt_input "VPN profile path" "")
+        [ -n "$vpn_profile" ] && break
+        echo "VPN profile path is required for vpn mode"
+      done
+    fi
+    if [ "$net_mode" = "gateway" ]; then
+      while true; do
+        gateway_ip=$(prompt_input "Gateway IP (e.g., 192.168.1.1)" "")
+        [ -n "$gateway_ip" ] && break
+        echo "Gateway IP is required for gateway mode"
+      done
+    fi
+    if [ "$net_mode" = "proxy" ]; then
+      proxy_engine=$(prompt_menu "Proxy engine" "sing-box" "xray" "hiddify")
+      while true; do
+        proxy_config=$(prompt_input "Proxy config path" "")
+        [ -n "$proxy_config" ] && break
+        echo "Proxy config path is required for proxy mode"
+      done
+    fi
+    tor_install=$(prompt_yesno "Install Tor (always-on)?" "yes")
+    tor_strict="no"
+    if [ "$tor_install" = "yes" ]; then
+      tor_strict=$(prompt_yesno "Strict Tor mode (block non-Tor traffic)?" "no")
+    fi
   fi
-  if [ "$net_mode" = "gateway" ]; then
-    while true; do
-      gateway_ip=$(prompt_input "Gateway IP (e.g., 192.168.1.1)" "")
-      [ -n "$gateway_ip" ] && break
-      echo "Gateway IP is required for gateway mode"
-    done
+
+  local mac_spoof="yes"
+  local mesh_onion="no"
+  local mesh_discovery="no"
+  local mesh_discovery_port=19998
+  local mesh_discovery_key=""
+  local mesh_auto_join="no"
+  local mesh_chat="yes"
+  local mesh_chat_listen=":19997"
+  local mesh_chat_psk=""
+  local mesh_chat_psk_file=""
+  local mesh_clipboard="no"
+  local mesh_clipboard_warn="yes"
+  local mesh_tun_enabled="no"
+  local mesh_tun_device="gargoyle0"
+  local mesh_tun_cidr="10.42.0.1/24"
+  local mesh_tun_peer_cidr="10.42.0.0/24"
+  local mesh_padding=256
+  local mesh_transport="tls"
+  local mesh_metadata="standard"
+  local mesh_onion_depth=3
+  local mesh_relay_allowlist="[]"
+  local hotspot_ssid=""
+  local hotspot_password=""
+  local hotspot_ifname=""
+  local hotspot_shared="yes"
+  local tor_trans_port=9040
+  local tor_dns_port=9053
+  local tor_use_bridges="no"
+  local tor_transport=""
+  local tor_bridge_lines="[]"
+  local torrc_path=""
+  local emulate_privacy="yes"
+  local emulate_temp="ram"
+  local emulate_downloads="downloads"
+  local emulate_display="direct"
+  local tunnel_type="frp"
+  local tunnel_server=""
+  local tunnel_token=""
+  local tunnel_local_ip="127.0.0.1"
+  local mail_mode="local"
+  local mail_sink="yes"
+  local mail_local="yes"
+  local mail_sink_listen="127.0.0.1:1025"
+  local mail_sink_ui="127.0.0.1:8025"
+  local mail_mesh_enabled="yes"
+  local mail_mesh_listen=":20025"
+  local mail_mesh_psk=""
+  local mail_mesh_psk_file=""
+  local ui_theme="dark"
+  local ui_boss_key="yes"
+  local ui_boss_mode="update"
+  local tools_file="tools.yaml"
+  local tools_auto="no"
+  local tools_repo=""
+  local update_url=""
+  local update_channel="stable"
+  local update_public_key=""
+  local update_auto="no"
+  local sync_enabled="no"
+  local sync_target=""
+  local sync_dir="./loot"
+  local sync_psk=""
+  local sync_psk_file=""
+  local sync_transport="tls"
+  local sync_padding=256
+  local sync_depth=3
+  local telegram_enabled="no"
+  local telegram_bot_token=""
+  local telegram_allowed_user=0
+  local telegram_pairing_ttl=60
+  local telegram_allow_cli="no"
+  local telegram_allow_wipe="no"
+  local telegram_allow_stats="yes"
+  if [ "$op_mode" = "fullanon" ]; then
+    mesh_onion="yes"
+    mesh_discovery="no"
+    mesh_chat="no"
+    mesh_clipboard="no"
+    mac_spoof="yes"
   fi
-  if [ "$net_mode" = "proxy" ]; then
-    proxy_engine=$(prompt_menu "Proxy engine" "sing-box" "xray" "hiddify")
-    while true; do
-      proxy_config=$(prompt_input "Proxy config path" "")
-      [ -n "$proxy_config" ] && break
-      echo "Proxy config path is required for proxy mode"
-    done
-  fi
-  tor_install=$(prompt_yesno "Install Tor (always-on)?" "yes")
-  local tor_strict="no"
-  if [ "$tor_install" = "yes" ]; then
-    tor_strict=$(prompt_yesno "Strict Tor mode (block non-Tor traffic)?" "no")
+
+  local advanced
+  advanced=$(prompt_advanced)
+  if [ "$advanced" = "yes" ]; then
+    ram_limit=$(prompt_input "RAM limit MB" "$ram_limit")
+    cpu_limit=$(prompt_input "CPU limit" "$cpu_limit")
+    tor_install=$(prompt_yesno "Tor always-on?" "$tor_install")
+    if [ "$tor_install" = "yes" ]; then
+      tor_strict=$(prompt_yesno "Tor strict kill-switch?" "$tor_strict")
+    else
+      tor_strict="no"
+    fi
+    tor_trans_port=$(prompt_input "Tor TransPort" "$tor_trans_port")
+    tor_dns_port=$(prompt_input "Tor DNSPort" "$tor_dns_port")
+    tor_use_bridges=$(prompt_yesno "Tor bridges enabled?" "$tor_use_bridges")
+    if [ "$tor_use_bridges" = "yes" ]; then
+      tor_transport=$(prompt_input "Tor transport (obfs4/meek/...)" "$tor_transport")
+      tor_bridge_lines=$(prompt_input "Tor bridges (comma or ; separated)" "")
+      tor_bridge_lines=$(yaml_list_flow "$tor_bridge_lines")
+    else
+      tor_transport=""
+      tor_bridge_lines="[]"
+    fi
+    torrc_path=$(prompt_input "Torrc path (optional)" "$torrc_path")
+    mac_spoof=$(prompt_yesno "MAC spoofing?" "$mac_spoof")
+    ports=$(prompt_yesno "Open ports by default?" "$ports")
+    doh_url=$(prompt_input "DoH URL (optional)" "$doh_url")
+    doh_listen=$(prompt_input "DoH listen (default 127.0.0.1:5353)" "$doh_listen")
+    mesh_onion=$(prompt_yesno "Mesh onion-only?" "$mesh_onion")
+    mesh_discovery=$(prompt_yesno "Mesh discovery enabled?" "$mesh_discovery")
+    mesh_discovery_port=$(prompt_input "Mesh discovery port" "$mesh_discovery_port")
+    mesh_discovery_key=$(prompt_input "Mesh discovery key (optional)" "$mesh_discovery_key")
+    mesh_auto_join=$(prompt_yesno "Mesh auto-join?" "$mesh_auto_join")
+    mesh_chat=$(prompt_yesno "Mesh chat enabled?" "$mesh_chat")
+    mesh_chat_listen=$(prompt_input "Mesh chat listen" "$mesh_chat_listen")
+    mesh_chat_psk=$(prompt_input "Mesh chat PSK (optional)" "$mesh_chat_psk")
+    mesh_chat_psk_file=$(prompt_input "Mesh chat PSK file (optional)" "$mesh_chat_psk_file")
+    mesh_clipboard=$(prompt_yesno "Mesh clipboard share?" "$mesh_clipboard")
+    mesh_clipboard_warn=$(prompt_yesno "Mesh clipboard warn?" "$mesh_clipboard_warn")
+    mesh_transport=$(prompt_menu "Mesh transport" "tcp" "tls")
+    mesh_metadata=$(prompt_menu "Mesh metadata" "off" "standard" "max")
+    mesh_padding=$(prompt_input "Mesh padding bytes" "$mesh_padding")
+    mesh_onion_depth=$(prompt_input "Mesh onion depth" "$mesh_onion_depth")
+    mesh_tun_enabled=$(prompt_yesno "Mesh tun enabled?" "$mesh_tun_enabled")
+    if [ "$mesh_tun_enabled" = "yes" ]; then
+      mesh_tun_device=$(prompt_input "Tun device" "$mesh_tun_device")
+      mesh_tun_cidr=$(prompt_input "Tun CIDR" "$mesh_tun_cidr")
+      mesh_tun_peer_cidr=$(prompt_input "Tun peer CIDR" "$mesh_tun_peer_cidr")
+    fi
+    mesh_relay_allowlist=$(prompt_input "Relay allowlist tokens (comma/;)" "")
+    mesh_relay_allowlist=$(yaml_list_flow "$mesh_relay_allowlist")
+    hotspot_ssid=$(prompt_input "Hotspot SSID" "$hotspot_ssid")
+    hotspot_password=$(prompt_input "Hotspot password" "$hotspot_password")
+    hotspot_ifname=$(prompt_input "Hotspot ifname" "$hotspot_ifname")
+    hotspot_shared=$(prompt_yesno "Hotspot shared/NAT?" "$hotspot_shared")
+    emulate_privacy=$(prompt_yesno "Emulate privacy mode?" "$emulate_privacy")
+    emulate_temp=$(prompt_menu "Emulate temp dir" "ram" "disk")
+    emulate_downloads=$(prompt_input "Emulate downloads dir" "$emulate_downloads")
+    emulate_display=$(prompt_menu "Emulate display server" "direct" "cage" "gamescope" "weston")
+    tunnel_type=$(prompt_menu "Tunnel type" "frp" "relay" "wss")
+    tunnel_server=$(prompt_input "Tunnel server" "$tunnel_server")
+    tunnel_token=$(prompt_input "Tunnel token" "$tunnel_token")
+    tunnel_local_ip=$(prompt_input "Tunnel local IP" "$tunnel_local_ip")
+    mail_mode=$(prompt_menu "Mail mode" "local" "tunnel")
+    mail_sink=$(prompt_yesno "Mail sink enabled?" "$mail_sink")
+    mail_local=$(prompt_yesno "Mail local server enabled?" "$mail_local")
+    mail_sink_listen=$(prompt_input "Mail sink listen" "$mail_sink_listen")
+    mail_sink_ui=$(prompt_input "Mail sink UI" "$mail_sink_ui")
+    mail_mesh_enabled=$(prompt_yesno "Mail mesh enabled?" "$mail_mesh_enabled")
+    mail_mesh_listen=$(prompt_input "Mail mesh listen" "$mail_mesh_listen")
+    mail_mesh_psk=$(prompt_input "Mail mesh PSK (optional)" "$mail_mesh_psk")
+    mail_mesh_psk_file=$(prompt_input "Mail mesh PSK file" "$mail_mesh_psk_file")
+    ui_theme=$(prompt_menu "UI theme" "dark" "light")
+    ui_boss_key=$(prompt_yesno "Boss-key enabled?" "$ui_boss_key")
+    ui_boss_mode=$(prompt_menu "Boss mode" "update" "htop" "blank")
+    tools_file=$(prompt_input "Tools pack file" "$tools_file")
+    tools_auto=$(prompt_yesno "Auto install tools?" "$tools_auto")
+    tools_repo=$(prompt_input "Tools repository URL (optional)" "$tools_repo")
+    local tools_profile
+    tools_profile=$(prompt_menu "Tools pack profile" "ctf (recommended)" "none" "anonymity" "ctf+emulate" "osint")
+    case "$tools_profile" in
+      "ctf (recommended)")
+        tools_file="tools/packs/ctf.yaml"
+        ;;
+      "anonymity")
+        tools_file="tools/packs/anonymity.yaml"
+        ;;
+      "ctf+emulate")
+        tools_file="tools/packs/ctf_emulate.yaml"
+        ;;
+      "osint")
+        tools_file="tools/packs/osint.yaml"
+        ;;
+      *)
+        tools_file="tools/packs/empty.yaml"
+        ;;
+    esac
+    install_scripts=$(prompt_yesno "Install Gargoyle Script (DSL) samples?" "$install_scripts")
+    update_url=$(prompt_input "Update URL (optional)" "$update_url")
+    update_channel=$(prompt_menu "Update channel" "stable" "beta" "dev")
+    update_public_key=$(prompt_input "Update public key (optional)" "$update_public_key")
+    update_auto=$(prompt_yesno "Auto updates?" "$update_auto")
+    sync_enabled=$(prompt_yesno "Sync (loot) enabled?" "$sync_enabled")
+    sync_target=$(prompt_input "Sync target (host:port)" "$sync_target")
+    sync_dir=$(prompt_input "Sync dir" "$sync_dir")
+    sync_psk=$(prompt_input "Sync PSK (optional)" "$sync_psk")
+    sync_psk_file=$(prompt_input "Sync PSK file" "$sync_psk_file")
+    sync_transport=$(prompt_menu "Sync transport" "tcp" "tls")
+    sync_padding=$(prompt_input "Sync padding bytes" "$sync_padding")
+    sync_depth=$(prompt_input "Sync depth" "$sync_depth")
+    telegram_enabled=$(prompt_yesno "Telegram C2 enabled?" "$telegram_enabled")
+    telegram_bot_token=$(prompt_input "Telegram bot token" "$telegram_bot_token")
+    telegram_allowed_user=$(prompt_input "Telegram allowed user ID" "$telegram_allowed_user")
+    telegram_pairing_ttl=$(prompt_input "Telegram pairing TTL (s)" "$telegram_pairing_ttl")
+    telegram_allow_cli=$(prompt_yesno "Telegram allow CLI?" "$telegram_allow_cli")
+    telegram_allow_wipe=$(prompt_yesno "Telegram allow wipe?" "$telegram_allow_wipe")
+    telegram_allow_stats=$(prompt_yesno "Telegram allow stats?" "$telegram_allow_stats")
   fi
 
   if [ "$target" = "Folder" ]; then
     local folder
     folder=$(prompt_input "Install folder path" "$HOME/gargoyle")
+    print_plan "Folder" "$folder" "" "" "" "" ""
+    local action
+    action=$(prompt_menu "Proceed?" "Proceed" "Dry-run (show plan only)" "Cancel")
+    case "$action" in
+      "Dry-run (show plan only)")
+        echo "Dry-run complete. No changes applied."
+        exit 0
+        ;;
+      "Cancel")
+        echo "Cancelled."
+        exit 1
+        ;;
+    esac
     mkdir -p "$folder"/{data,downloads,logs,keys,shared}
-    write_config "$folder/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
+    write_config "$folder/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+    if [[ "$tools_file" == tools/packs/* ]]; then
+      pack_name=$(basename "$tools_file" .yaml)
+      write_pack_file "$folder" "$pack_name"
+    fi
     gen_identity_key "$folder/keys/identity.key"
     if [ "$install_scripts" = "yes" ]; then
       mkdir -p "$folder/scripts"
@@ -366,11 +819,28 @@ main() {
   local layout free_space
   layout=$(prompt_menu "USB layout" "Full (EFI+SYSTEM+PERSIST+SHARED)" "Shared-only (single exFAT)")
   free_space=$(prompt_input "Leave unallocated space at end (MB)" "0")
-  local cluster_kb=256
+  local cluster_kb=512
+  local action
 
   if [ "$layout" = "Shared-only (single exFAT)" ]; then
+    print_plan "USB" "$dev" "$layout" "" "" "$free_space" "$cluster_kb"
+    action=$(prompt_menu "Proceed?" "Proceed" "Dry-run (show plan only)" "Cancel")
+    case "$action" in
+      "Dry-run (show plan only)")
+        echo "Dry-run complete. No changes applied."
+        exit 0
+        ;;
+      "Cancel")
+        echo "Cancelled."
+        exit 1
+        ;;
+    esac
     apply_usb_shared_layout "$dev" "$free_space" "$cluster_kb"
-    write_config "/mnt/gargoyle_shared/gargoyle/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
+    write_config "/mnt/gargoyle_shared/gargoyle/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+    if [[ "$tools_file" == tools/packs/* ]]; then
+      pack_name=$(basename "$tools_file" .yaml)
+      write_pack_file "/mnt/gargoyle_shared/gargoyle" "$pack_name"
+    fi
     gen_identity_key "/mnt/gargoyle_shared/gargoyle/keys/identity.key"
     if [ "$install_scripts" = "yes" ]; then
       write_sample_script "/mnt/gargoyle_shared/gargoyle/scripts/sample.gsl"
@@ -383,9 +853,25 @@ main() {
   system_size=$(prompt_input "System partition size (MB)" "4096")
   persist_size=$(prompt_input "Persistent partition size (MB)" "8192")
 
+  print_plan "USB" "$dev" "$layout" "$system_size" "$persist_size" "$free_space" "$cluster_kb"
+  action=$(prompt_menu "Proceed?" "Proceed" "Dry-run (show plan only)" "Cancel")
+  case "$action" in
+    "Dry-run (show plan only)")
+      echo "Dry-run complete. No changes applied."
+      exit 0
+      ;;
+    "Cancel")
+      echo "Cancelled."
+      exit 1
+      ;;
+  esac
   apply_usb_layout "$dev" "$system_size" "$persist_size" "$free_space" "$cluster_kb"
 
-  write_config "/mnt/gargoyle_persist/gargoyle.yaml" "$edition" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$tor_install" "$tor_strict" "$proxy_engine" "$proxy_config"
+  write_config "/mnt/gargoyle_persist/gargoyle.yaml" "$edition" "$op_mode" "$locale" "$ram_limit" "$cpu_limit" "$dns_profile" "$dns_custom" "$wifi" "$bt" "$ports" "$usb_enabled" "$usb_read_only" "$ram_only" "$net_mode" "$vpn_type" "$vpn_profile" "$gateway_ip" "$proxy_engine" "$proxy_config" "$tor_install" "$tor_strict" "$tor_trans_port" "$tor_dns_port" "$tor_use_bridges" "$tor_transport" "$tor_bridge_lines" "$torrc_path" "$mac_spoof" "$mesh_onion" "$mesh_discovery" "$mesh_discovery_port" "$mesh_discovery_key" "$mesh_auto_join" "$mesh_chat" "$mesh_chat_listen" "$mesh_chat_psk" "$mesh_chat_psk_file" "$mesh_clipboard" "$mesh_clipboard_warn" "$mesh_tun_enabled" "$mesh_tun_device" "$mesh_tun_cidr" "$mesh_tun_peer_cidr" "$mesh_padding" "$mesh_transport" "$mesh_metadata" "$mesh_onion_depth" "$mesh_relay_allowlist" "$hotspot_ssid" "$hotspot_password" "$hotspot_ifname" "$hotspot_shared" "$emulate_privacy" "$emulate_temp" "$emulate_downloads" "$emulate_display" "$tunnel_type" "$tunnel_server" "$tunnel_token" "$tunnel_local_ip" "$mail_mode" "$mail_sink" "$mail_local" "$mail_sink_listen" "$mail_sink_ui" "$mail_mesh_enabled" "$mail_mesh_listen" "$mail_mesh_psk" "$mail_mesh_psk_file" "$ui_theme" "$ui_boss_key" "$ui_boss_mode" "$tools_file" "$tools_auto" "$tools_repo" "$update_url" "$update_channel" "$update_public_key" "$update_auto" "$sync_enabled" "$sync_target" "$sync_dir" "$sync_psk" "$sync_psk_file" "$sync_transport" "$sync_padding" "$sync_depth" "$telegram_enabled" "$telegram_bot_token" "$telegram_allowed_user" "$telegram_pairing_ttl" "$telegram_allow_cli" "$telegram_allow_wipe" "$telegram_allow_stats" "$doh_url" "$doh_listen"
+  if [[ "$tools_file" == tools/packs/* ]]; then
+    pack_name=$(basename "$tools_file" .yaml)
+    write_pack_file "/mnt/gargoyle_persist" "$pack_name"
+  fi
   gen_identity_key "/mnt/gargoyle_persist/keys/identity.key"
   if [ "$install_scripts" = "yes" ]; then
     mkdir -p "/mnt/gargoyle_persist/scripts"

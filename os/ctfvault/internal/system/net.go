@@ -73,11 +73,9 @@ func ApplyNetwork(cfg config.NetworkConfig, home string) NetResult {
 		}
 	}
 
-	if cfg.Mode == "vpn" || cfg.Mode == "proxy" || cfg.TorAlwaysOn || cfg.TorStrict {
-		info, warns := leakCheck(cfg.Mode, cfg.TorAlwaysOn || cfg.TorStrict)
-		result.Infos = append(result.Infos, info...)
-		result.Warnings = append(result.Warnings, warns...)
-	}
+	info, warns := leakCheck(cfg.Mode, cfg.TorAlwaysOn || cfg.TorStrict)
+	result.Infos = append(result.Infos, info...)
+	result.Warnings = append(result.Warnings, warns...)
 
 	return result
 }
@@ -349,6 +347,41 @@ func applyTorFirewall(cfg config.NetworkConfig) error {
 		}
 	}
 	return nil
+}
+
+func EnsureTorKillswitch(cfg config.NetworkConfig) error {
+	if runtime.GOOS != "linux" {
+		return errors.New("killswitch supported on Linux only")
+	}
+	if !cfg.TorStrict {
+		return errors.New("tor_strict is disabled")
+	}
+	return applyTorFirewall(cfg)
+}
+
+func TorKillswitchActive() (bool, error) {
+	if runtime.GOOS != "linux" {
+		return false, errors.New("killswitch supported on Linux only")
+	}
+	iptables, err := exec.LookPath("iptables")
+	if err != nil {
+		return false, errors.New("iptables not found")
+	}
+	out, err := exec.Command(iptables, "-S", "OUTPUT").Output()
+	if err != nil {
+		return false, err
+	}
+	if !strings.Contains(string(out), "GARGOYLE_TOR") {
+		return false, nil
+	}
+	outNat, err := exec.Command(iptables, "-t", "nat", "-S", "OUTPUT").Output()
+	if err != nil {
+		return false, err
+	}
+	if !strings.Contains(string(outNat), "GARGOYLE_TOR_NAT") {
+		return false, nil
+	}
+	return true, nil
 }
 
 func writeTorConfig(cfg config.NetworkConfig, home string) (string, error) {

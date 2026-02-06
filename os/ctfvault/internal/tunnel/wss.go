@@ -230,7 +230,10 @@ func servePublic(ctx context.Context, ln net.Listener, state *wssState) error {
 			if ctrl == nil {
 				return
 			}
-			id := randID()
+			id, err := randID()
+			if err != nil {
+				return
+			}
 			ch := make(chan *wss.Conn, 1)
 			state.storePending(id, ch)
 			msg := controlMsg{Op: "dial", ID: id}
@@ -308,10 +311,12 @@ func checkToken(r *http.Request, token string, service string) bool {
 	return true
 }
 
-func randID() string {
+func randID() (string, error) {
 	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 func loadOrSelfSigned(certPath, keyPath string) (*tls.Config, error) {

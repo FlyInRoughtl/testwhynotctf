@@ -1,0 +1,8 @@
+pack: anonymity
+tools:
+  - name: tor
+    install: "apt:tor"
+  - name: proxychains4
+    install: "apt:proxychains4"
+  - name: dnsutils
+    install: "apt:dnsutils"

@@ -1,0 +1,14 @@
+pack: osint
+tools:
+  - name: whois
+    install: "apt:whois"
+  - name: dnsutils
+    install: "apt:dnsutils"
+  - name: curl
+    install: "apt:curl"
+  - name: wget
+    install: "apt:wget"
+  - name: nmap
+    install: "apt:nmap"
+  - name: exiftool
+    install: "apt:exiftool"

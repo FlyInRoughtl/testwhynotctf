@@ -16,9 +16,14 @@ type relayServer struct {
 	mu      sync.Mutex
 	waiting map[string]net.Conn
 	sem     chan struct{}
+	allow   map[string]struct{}
 }
 
 func RunRelay(ctx context.Context, listen string) error {
+	return RunRelayWithOptions(ctx, listen, nil)
+}
+
+func RunRelayWithOptions(ctx context.Context, listen string, allowlist []string) error {
 	if listen == "" {
 		listen = ":18080"
 	}
@@ -28,9 +33,19 @@ func RunRelay(ctx context.Context, listen string) error {
 	}
 	defer ln.Close()
 
+	allow := make(map[string]struct{})
+	for _, token := range allowlist {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		allow[token] = struct{}{}
+	}
+
 	srv := &relayServer{
 		waiting: make(map[string]net.Conn),
 		sem:     make(chan struct{}, 256),
+		allow:   allow,
 	}
 
 	for {
@@ -83,6 +98,14 @@ func (s *relayServer) handle(conn net.Conn) {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Time{})
+	if len(s.allow) > 0 {
+		if hdr.Token == "" {
+			return
+		}
+		if _, ok := s.allow[hdr.Token]; !ok {
+			return
+		}
+	}
 
 	switch hdr.Op {
 	case "relay":

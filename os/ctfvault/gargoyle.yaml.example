@@ -4,6 +4,7 @@ system:
   cpu_limit: 2
   locale: "ru"
   edition: "public"
+  mode: "standard" # standard|fullanon
 
 storage:
   persistent: true
@@ -55,12 +56,22 @@ mesh:
   discovery_key: ""
   auto_join: false
   chat_enabled: true
+  chat_listen: ":19997"
+  chat_psk: ""
+  chat_psk_file: ""
   clipboard_share: false
   clipboard_warn: true
   tun_enabled: false
   tun_device: "gargoyle0"
   tun_cidr: "10.42.0.1/24"
   tun_peer_cidr: "10.42.0.0/24"
+  onion_only: false
+  relay_allowlist: []
+  hotspot:
+    ssid: ""
+    password: ""
+    ifname: ""
+    shared: true
 
 emulate:
   privacy_mode: true
@@ -94,12 +105,23 @@ ui:
 tools:
   file: "tools.yaml"
   auto_install: false
+  repository: "" # raw URL to packs repo (optional)
 
 update:
   url: ""
   channel: "stable"
   public_key: ""
   auto: false
+
+sync:
+  enabled: false
+  target: ""
+  dir: "./loot"
+  psk: ""
+  psk_file: ""
+  transport: "tls"
+  padding_bytes: 256
+  depth: 3
 
 telegram:
   enabled: false

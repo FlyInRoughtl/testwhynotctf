@@ -3,7 +3,9 @@ package ui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -14,6 +16,7 @@ import (
 	"gargoyle/internal/mesh"
 	"gargoyle/internal/paths"
 	"gargoyle/internal/services"
+	"gargoyle/internal/syncer"
 	"gargoyle/internal/system"
 	"gargoyle/internal/version"
 
@@ -31,6 +34,11 @@ const (
 	viewHub
 	viewTools
 	viewMesh
+	viewHotspot
+	viewGateway
+	viewSync
+	viewBroadcast
+	viewWarnings
 	viewStatus
 	viewSystem
 )
@@ -48,30 +56,37 @@ const gargoyleBanner = `  ######  #####  ######  ######  #####  ##   ## ##     #
            /\\  G A R G O Y L E  /\\`
 
 type model struct {
-	cfg         config.Config
-	home        string
-	identity    string
-	view        view
-	cursor      int
-	menu        []string
-	tick        int
-	width       int
-	height      int
-	networks    []string
-	netStatus   string
-	lastScanAt  time.Time
-	usbDevices  []string
-	usbStatus   string
-	meshPeers   []string
-	meshErr     string
-	services    *services.Manager
-	status      services.Status
-	lastMsg     string
-	lastErr     string
-	confirmWipe bool
-	usbLocked   bool
-	usbEvents   <-chan system.USBEvent
-	bossMode    bool
+	cfg             config.Config
+	home            string
+	identity        string
+	view            view
+	cursor          int
+	menu            []string
+	tick            int
+	width           int
+	height          int
+	networks        []string
+	netStatus       string
+	lastScanAt      time.Time
+	usbDevices      []string
+	usbStatus       string
+	hotspotStatus   string
+	meshPeers       []string
+	meshErr         string
+	services        *services.Manager
+	status          services.Status
+	lastMsg         string
+	lastErr         string
+	confirmWipe     bool
+	usbLocked       bool
+	usbEvents       <-chan system.USBEvent
+	bossMode        bool
+	broadcastActive bool
+	broadcastInput  string
+	broadcastAlert  bool
+	showHelp        bool
+	torStrictActive bool
+	torStrictErr    string
 }
 
 type netScanMsg struct {
@@ -88,6 +103,11 @@ type usbScanMsg struct {
 	Err     error
 }
 
+type hotspotStatusMsg struct {
+	Status string
+	Err    error
+}
+
 type usbEventMsg struct {
 	Event system.USBEvent
 }
@@ -97,17 +117,28 @@ type meshDiscoverMsg struct {
 	Err   error
 }
 
+type broadcastResultMsg struct {
+	Count int
+	Err   error
+}
+
+type torCheckMsg struct {
+	Active bool
+	Err    error
+}
+
 func initialModel(cfg config.Config, home string, identity string, svc *services.Manager, usbEvents <-chan system.USBEvent) model {
 	return model{
-		cfg:       cfg,
-		home:      home,
-		identity:  identity,
-		menu:      []string{"Home", "Network", "Storage", "Emulate", "Hub", "Tools", "Mesh", "Status", "System"},
-		view:      viewHome,
-		netStatus: "scan pending",
-		usbStatus: usbStatusDefault(cfg),
-		services:  svc,
-		usbEvents: usbEvents,
+		cfg:           cfg,
+		home:          home,
+		identity:      identity,
+		menu:          []string{"Home", "Network", "Storage", "Emulate", "Hub", "Tools", "Mesh", "Hotspot", "Gateway", "Sync", "Broadcast", "Warnings", "Status", "System"},
+		view:          viewHome,
+		netStatus:     "scan pending",
+		usbStatus:     usbStatusDefault(cfg),
+		hotspotStatus: "unknown",
+		services:      svc,
+		usbEvents:     usbEvents,
 	}
 }
 
@@ -116,11 +147,17 @@ func (m model) Init() tea.Cmd {
 	if m.cfg.Storage.USBEnabled {
 		cmds = append(cmds, scanUSBsCmd())
 	}
+	if runtime.GOOS == "linux" {
+		cmds = append(cmds, hotspotStatusCmd())
+	}
 	if m.usbEvents != nil {
 		cmds = append(cmds, usbWatchCmd(m.usbEvents))
 	}
 	if m.cfg.Mesh.DiscoveryEnabled {
 		cmds = append(cmds, discoverMeshCmd(m.cfg))
+	}
+	if m.cfg.Network.TorStrict {
+		cmds = append(cmds, torCheckCmd())
 	}
 	return tea.Batch(cmds...)
 }
@@ -143,6 +180,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Storage.USBEnabled {
 				cmds = append(cmds, scanUSBsCmd())
 			}
+			if runtime.GOOS == "linux" {
+				cmds = append(cmds, hotspotStatusCmd())
+			}
+			if m.cfg.Network.TorStrict {
+				cmds = append(cmds, torCheckCmd())
+			}
 			return m, tea.Batch(cmds...)
 		}
 		return m, tea.Batch(tickCmd(), statusCmd(m.services))
@@ -160,6 +203,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.usbStatus = fmt.Sprintf("found %d", len(msg.Devices))
 			m.usbDevices = msg.Devices
+		}
+	case hotspotStatusMsg:
+		if msg.Err != nil {
+			m.hotspotStatus = msg.Err.Error()
+		} else {
+			m.hotspotStatus = msg.Status
 		}
 	case statusMsg:
 		m.status = msg.Status
@@ -184,10 +233,56 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.meshPeers = msg.Peers
 			m.meshErr = ""
 		}
+	case broadcastResultMsg:
+		if msg.Err != nil {
+			m.lastErr = msg.Err.Error()
+			m.lastMsg = ""
+		} else {
+			m.lastErr = ""
+			m.lastMsg = fmt.Sprintf("broadcast sent (%d peers)", msg.Count)
+		}
+	case torCheckMsg:
+		if msg.Err != nil {
+			m.torStrictErr = msg.Err.Error()
+			m.torStrictActive = false
+		} else {
+			m.torStrictErr = ""
+			m.torStrictActive = msg.Active
+		}
 	case tea.KeyMsg:
 		if m.cfg.UI.BossKey && msg.String() == "f10" {
 			m.bossMode = !m.bossMode
 			return m, nil
+		}
+		if msg.String() == "?" || msg.String() == "H" {
+			m.showHelp = !m.showHelp
+			return m, nil
+		}
+		if m.broadcastActive {
+			switch msg.Type {
+			case tea.KeyEsc:
+				m.broadcastActive = false
+				m.broadcastInput = ""
+				return m, nil
+			case tea.KeyEnter:
+				text := strings.TrimSpace(m.broadcastInput)
+				m.broadcastActive = false
+				m.broadcastInput = ""
+				if text == "" {
+					m.lastErr = "broadcast: empty message"
+					m.lastMsg = ""
+					return m, nil
+				}
+				return m, broadcastCmd(m.cfg, text, m.broadcastAlert)
+			case tea.KeyBackspace, tea.KeyDelete:
+				m.broadcastInput = trimLastRune(m.broadcastInput)
+				return m, nil
+			case tea.KeyRunes:
+				m.broadcastInput += string(msg.Runes)
+				return m, nil
+			default:
+				return m, nil
+			}
 		}
 		if m.usbLocked {
 			if msg.String() == "x" {
@@ -201,6 +296,112 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, wipeCmd(m.home, m.cfg.Security.IdentityKeyPath)
 			}
 			return m, nil
+		}
+		if m.view == viewHotspot {
+			switch msg.String() {
+			case "h":
+				m.lastErr = ""
+				m.lastMsg = ""
+				if runtime.GOOS != "linux" {
+					m.lastErr = "hotspot: Linux only"
+					break
+				}
+				if strings.Contains(m.hotspotStatus, "active") {
+					if err := system.StopHotspot(); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = "hotspot stopped"
+					}
+				} else {
+					cfg := system.HotspotConfig{
+						SSID:     m.cfg.Mesh.Hotspot.SSID,
+						Password: m.cfg.Mesh.Hotspot.Password,
+						Ifname:   m.cfg.Mesh.Hotspot.Ifname,
+						Shared:   m.cfg.Mesh.Hotspot.Shared,
+					}
+					if err := system.StartHotspot(cfg); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = "hotspot started"
+					}
+				}
+				return m, hotspotStatusCmd()
+			}
+		}
+		if m.view == viewGateway {
+			switch msg.String() {
+			case "g":
+				m.lastErr = ""
+				m.lastMsg = ""
+				if m.services == nil {
+					m.lastErr = "services unavailable"
+					break
+				}
+				if m.status.MeshGatewayRunning {
+					if err := m.services.StopMeshGateway(); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = "mesh gateway stopped"
+					}
+				} else {
+					listen := ":1090"
+					upstream := "127.0.0.1:1080"
+					if err := m.services.StartMeshGateway(listen, upstream); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = fmt.Sprintf("mesh gateway %s -> %s", listen, upstream)
+					}
+				}
+			}
+		}
+		if m.view == viewSync {
+			switch msg.String() {
+			case "y":
+				m.lastErr = ""
+				m.lastMsg = ""
+				if m.services == nil {
+					m.lastErr = "services unavailable"
+					break
+				}
+				if m.status.SyncRunning {
+					if err := m.services.StopSync(); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = "sync stopped"
+					}
+				} else {
+					if m.cfg.Sync.Target == "" || m.cfg.Sync.Dir == "" {
+						m.lastErr = "sync target/dir not configured"
+						break
+					}
+					opts := syncer.Options{
+						Dir:           m.cfg.Sync.Dir,
+						Target:        m.cfg.Sync.Target,
+						PSK:           m.cfg.Sync.PSK,
+						PSKFile:       m.cfg.Sync.PSKFile,
+						Transport:     m.cfg.Sync.Transport,
+						PaddingBytes:  m.cfg.Sync.PaddingBytes,
+						Depth:         m.cfg.Sync.Depth,
+						MetadataLevel: m.cfg.Mesh.MetadataLevel,
+					}
+					if err := m.services.StartSync(opts); err != nil {
+						m.lastErr = err.Error()
+					} else {
+						m.lastMsg = "sync started"
+					}
+				}
+			}
+		}
+		if m.view == viewBroadcast {
+			switch msg.String() {
+			case "b":
+				m.broadcastActive = true
+				m.broadcastInput = ""
+				return m, nil
+			case "a":
+				m.broadcastAlert = !m.broadcastAlert
+				return m, nil
+			}
 		}
 		if m.view == viewEmulate {
 			if m.services == nil {
@@ -332,6 +533,14 @@ func (m model) View() string {
 	if m.bossMode {
 		return bossView(m)
 	}
+	if m.showHelp {
+		appStyle := lipgloss.NewStyle().Padding(1, 2)
+		header := headerView(m)
+		help := helpView(m)
+		footer := footerView(m)
+		layout := lipgloss.JoinVertical(lipgloss.Left, header, help, footer)
+		return appStyle.Render(layout)
+	}
 	appStyle := lipgloss.NewStyle().Padding(1, 2)
 	header := headerView(m)
 	sidebar := sidebarView(m)
@@ -393,6 +602,16 @@ func mainView(m model) string {
 		return box.Render(toolsView(m))
 	case viewMesh:
 		return box.Render(meshView(m))
+	case viewHotspot:
+		return box.Render(hotspotView(m))
+	case viewGateway:
+		return box.Render(gatewayView(m))
+	case viewSync:
+		return box.Render(syncView(m))
+	case viewBroadcast:
+		return box.Render(broadcastView(m))
+	case viewWarnings:
+		return box.Render(warningsView(m))
 	case viewStatus:
 		return box.Render(statusView(m))
 	case viewSystem:
@@ -403,8 +622,16 @@ func mainView(m model) string {
 }
 
 func footerView(m model) string {
-	hint := "Arrows: navigate | 1-9: jump | r: relay | d: doh | x: wipe | f10: boss | q/esc: quit"
+	hint := "Arrows: navigate | 1-9: jump | r: relay | d: doh | h: hotspot | g: gateway | y: sync | b: broadcast | ?: help | f10: boss | q/esc: quit"
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(hint)
+}
+
+func warningsView(m model) string {
+	warnings := collectWarnings(m)
+	if len(warnings) == 0 {
+		return "Warnings\n\nNo active risks detected."
+	}
+	return "Warnings\n\n- " + strings.Join(warnings, "\n- ")
 }
 
 func bossView(m model) string {
@@ -549,6 +776,78 @@ func meshView(m model) string {
 	)
 }
 
+func collectWarnings(m model) []string {
+	var out []string
+	torOn := m.cfg.Network.Tor || m.cfg.Network.TorAlwaysOn
+	if !torOn {
+		out = append(out, "Tor is OFF")
+	}
+	if m.cfg.Network.TorStrict {
+		if m.torStrictErr != "" {
+			out = append(out, "Tor strict check failed: "+m.torStrictErr)
+		} else if !m.torStrictActive {
+			out = append(out, "Tor strict enabled, kill-switch not active")
+		}
+	}
+	if m.cfg.Storage.USBEnabled && !m.cfg.Storage.USBReadOnly {
+		out = append(out, "USB read-write enabled")
+	}
+	if m.cfg.Network.PortsOpen {
+		out = append(out, "Ports open by default")
+	}
+	if !m.cfg.Network.MACSpoof {
+		out = append(out, "MAC spoofing disabled")
+	}
+	return out
+}
+
+func hotspotView(m model) string {
+	status := m.hotspotStatus
+	if status == "" {
+		status = "unknown"
+	}
+	return fmt.Sprintf(
+		"Hotspot / NAT\n\nStatus: %s\nSSID: %s\nIfname: %s\nShared: %s\n\nActions:\n- h: start/stop hotspot\n- CLI: gargoyle hotspot start --ssid ... --password ... --shared\n",
+		status,
+		emptyIf(m.cfg.Mesh.Hotspot.SSID),
+		emptyIf(m.cfg.Mesh.Hotspot.Ifname),
+		onOff(m.cfg.Mesh.Hotspot.Shared),
+	)
+}
+
+func gatewayView(m model) string {
+	state := onOff(m.status.MeshGatewayRunning)
+	return fmt.Sprintf(
+		"Mesh Gateway\n\nRunning: %s\nListen: %s\nUpstream: %s\n\nActions:\n- g: start/stop gateway\n- CLI: gargoyle mesh gateway start --listen :1090 --upstream 127.0.0.1:1080\n",
+		state,
+		emptyIf(m.status.MeshGatewayListen),
+		emptyIf(m.status.MeshGatewayUpstream),
+	)
+}
+
+func syncView(m model) string {
+	state := onOff(m.status.SyncRunning)
+	return fmt.Sprintf(
+		"Sync (Loot auto-send)\n\nRunning: %s\nDir: %s\nTarget: %s\n\nActions:\n- y: start/stop sync\n- CLI: gargoyle sync start --dir ./loot --target host:port\n",
+		state,
+		emptyIf(m.cfg.Sync.Dir),
+		emptyIf(m.cfg.Sync.Target),
+	)
+}
+
+func broadcastView(m model) string {
+	alert := onOff(m.broadcastAlert)
+	line := "Press b to compose broadcast."
+	if m.broadcastActive {
+		line = fmt.Sprintf("Message: %s", m.broadcastInput)
+	}
+	return fmt.Sprintf(
+		"Broadcast\n\nAlert mode: %s\n%s\n\nActions:\n- b: compose/send\n- a: toggle alert\n",
+		alert,
+		line,
+	)
+}
+
 func statusView(m model) string {
 	relayState := "stopped"
 	if m.status.RelayRunning {
@@ -572,7 +871,7 @@ func statusView(m model) string {
 	}
 
 	return fmt.Sprintf(
-		"Status\n\nRelay: %s\nListen: %s\nPID: %s\nError: %s\n\nDoH: %s\nListen: %s\nURL: %s\nPID: %d\nError: %s\n\nEmulate: %s (%s)\nTunnel: %s (%s)\nProxy: %s (%s)\nMail: sink %s / local %s / mesh %s\nHub: %s (%s)\nTelegram: %s\n\n%s",
+		"Status\n\nRelay: %s\nListen: %s\nPID: %s\nError: %s\n\nDoH: %s\nListen: %s\nURL: %s\nPID: %d\nError: %s\n\nEmulate: %s (%s)\nTunnel: %s (%s)\nProxy: %s (%s)\nMail: sink %s / local %s / mesh %s\nHub: %s (%s)\nMeshGateway: %s (%s -> %s)\nSync: %s (dir=%s, target=%s)\nTelegram: %s\n\n%s",
 		relayState,
 		emptyIf(m.status.RelayListen),
 		relayPID,
@@ -593,6 +892,12 @@ func statusView(m model) string {
 		onOff(m.status.MailMeshRunning),
 		onOff(m.status.HubRunning),
 		emptyIf(m.status.HubListen),
+		onOff(m.status.MeshGatewayRunning),
+		emptyIf(m.status.MeshGatewayListen),
+		emptyIf(m.status.MeshGatewayUpstream),
+		onOff(m.status.SyncRunning),
+		emptyIf(m.status.SyncDir),
+		emptyIf(m.status.SyncTarget),
 		onOff(m.status.TelegramRunning),
 		statusLine.String(),
 	)
@@ -600,15 +905,38 @@ func statusView(m model) string {
 
 func systemView(m model) string {
 	return fmt.Sprintf(
-		"System\n\nEdition: %s\nLocale: %s\nIdentity: %s\n\nPrivacy: MAC spoof %s, Tor %s, Strict %s\nEmulate privacy: %s",
+		"System\n\nEdition: %s\nLocale: %s\nMode: %s\nIdentity: %s\n\nPrivacy: MAC spoof %s, Tor %s, Strict %s\nEmulate privacy: %s",
 		m.cfg.System.Edition,
 		m.cfg.System.Locale,
+		m.cfg.System.Mode,
 		m.identity,
 		onOff(m.cfg.Network.MACSpoof),
 		onOff(m.cfg.Network.TorAlwaysOn || m.cfg.Network.Tor),
 		onOff(m.cfg.Network.TorStrict),
 		onOff(m.cfg.Emulate.PrivacyMode),
 	)
+}
+
+func helpView(m model) string {
+	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2).Width(max(60, m.width-10))
+	text := "Help\n\n" +
+		"Navigation:\n" +
+		"- Arrows / hjkl: move menu\n" +
+		"- 1-9: jump to section\n" +
+		"- ?: toggle help\n\n" +
+		"Global hotkeys:\n" +
+		"- r: relay start/stop\n" +
+		"- d: DoH start/stop\n" +
+		"- x: emergency wipe (double-press)\n" +
+		"- f10: boss key\n\n" +
+		"Screens:\n" +
+		"- Emulate: f (firefox), t (tor), o (file manager), s (stop)\n" +
+		"- Hotspot: h start/stop\n" +
+		"- Gateway: g start/stop\n" +
+		"- Sync: y start/stop\n" +
+		"- Broadcast: b compose, a alert toggle\n\n" +
+		"CLI help: gargoyle help / gargoyle help-gargoyle"
+	return box.Render(text)
 }
 
 func wifiAnim(tick int) string {
@@ -750,6 +1078,13 @@ func discoverMeshCmd(cfg config.Config) tea.Cmd {
 	}
 }
 
+func torCheckCmd() tea.Cmd {
+	return func() tea.Msg {
+		active, err := system.TorKillswitchActive()
+		return torCheckMsg{Active: active, Err: err}
+	}
+}
+
 func statusCmd(svc *services.Manager) tea.Cmd {
 	return func() tea.Msg {
 		if svc == nil {
@@ -763,6 +1098,13 @@ func scanUSBsCmd() tea.Cmd {
 	return func() tea.Msg {
 		devs, err := system.ListUSBDevices()
 		return usbScanMsg{Devices: devs, Err: err}
+	}
+}
+
+func hotspotStatusCmd() tea.Cmd {
+	return func() tea.Msg {
+		status, err := system.HotspotStatus()
+		return hotspotStatusMsg{Status: status, Err: err}
 	}
 }
 
@@ -792,6 +1134,73 @@ func wipeCmd(home, identityRel string) tea.Cmd {
 		err := system.Wipe(home, identityAbs, system.WipeEmergency)
 		return wipeMsg{Err: err}
 	}
+}
+
+func broadcastCmd(cfg config.Config, message string, alert bool) tea.Cmd {
+	return func() tea.Msg {
+		if cfg.Mesh.OnionOnly {
+			return broadcastResultMsg{Err: errors.New("broadcast disabled in onion-only mode")}
+		}
+		if !cfg.Mesh.DiscoveryEnabled {
+			return broadcastResultMsg{Err: errors.New("mesh discovery disabled")}
+		}
+		peers, err := mesh.DiscoverPeers(context.Background(), cfg.Mesh.DiscoveryPort, cfg.Mesh.DiscoveryKey)
+		if err != nil {
+			return broadcastResultMsg{Err: err}
+		}
+		if len(peers) == 0 {
+			return broadcastResultMsg{Err: errors.New("no peers found")}
+		}
+		op := "chat"
+		if alert {
+			op = "alert"
+		}
+		opts := mesh.MessageOptions{
+			PSK:          cfg.Mesh.ChatPSK,
+			PSKFile:      cfg.Mesh.ChatPSKFile,
+			Transport:    cfg.Mesh.Transport,
+			PaddingBytes: cfg.Mesh.PaddingBytes,
+			Security:     true,
+			Depth:        cfg.Mesh.OnionDepth,
+			Op:           op,
+		}
+		okCount := 0
+		for _, peer := range peers {
+			opts.Target = mergeHostPort(peer, cfg.Mesh.ChatListen)
+			if err := mesh.SendMessage(context.Background(), message, opts); err == nil {
+				okCount++
+			}
+		}
+		if okCount == 0 {
+			return broadcastResultMsg{Err: errors.New("broadcast failed")}
+		}
+		return broadcastResultMsg{Count: okCount}
+	}
+}
+
+func trimLastRune(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	return string(r[:len(r)-1])
+}
+
+func mergeHostPort(peer string, listen string) string {
+	host := peer
+	if h, _, err := net.SplitHostPort(peer); err == nil {
+		host = h
+	}
+	port := ""
+	if strings.HasPrefix(listen, ":") {
+		port = strings.TrimPrefix(listen, ":")
+	} else if _, p, err := net.SplitHostPort(listen); err == nil {
+		port = p
+	}
+	if port == "" {
+		return peer
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func scanNetworks() ([]string, error) {

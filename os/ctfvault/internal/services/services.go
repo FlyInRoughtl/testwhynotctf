@@ -15,7 +15,9 @@ import (
 	"gargoyle/internal/hub"
 	"gargoyle/internal/mail"
 	"gargoyle/internal/mesh"
+	"gargoyle/internal/meshgateway"
 	"gargoyle/internal/system"
+	"gargoyle/internal/syncer"
 	"gargoyle/internal/telegram"
 	"gargoyle/internal/proxy"
 	"gargoyle/internal/tunnel"
@@ -70,6 +72,18 @@ type Manager struct {
 	proxyPID     int
 	proxyErr     string
 	proxyStop    func() error
+
+	meshGatewayRunning bool
+	meshGatewayListen  string
+	meshGatewayUpstream string
+	meshGatewayErr     string
+	meshGatewayStop    func() error
+
+	syncRunning bool
+	syncTarget  string
+	syncDir     string
+	syncErr     string
+	syncStop    func() error
 
 	telegramRunning bool
 	telegramErr     string
@@ -466,6 +480,89 @@ func (m *Manager) StopProxy() error {
 	return nil
 }
 
+func (m *Manager) StartMeshGateway(listen, upstream string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.meshGatewayRunning {
+		return errors.New("mesh gateway already running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop, err := meshgateway.Start(ctx, meshgateway.Options{
+		Listen:   listen,
+		Upstream: upstream,
+	})
+	if err != nil {
+		m.meshGatewayErr = err.Error()
+		cancel()
+		return err
+	}
+	m.meshGatewayRunning = true
+	m.meshGatewayListen = listen
+	m.meshGatewayUpstream = upstream
+	m.meshGatewayErr = ""
+	m.meshGatewayStop = func() error {
+		cancel()
+		return stop()
+	}
+	return nil
+}
+
+func (m *Manager) StopMeshGateway() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.meshGatewayRunning || m.meshGatewayStop == nil {
+		return errors.New("mesh gateway not running")
+	}
+	if err := m.meshGatewayStop(); err != nil {
+		m.meshGatewayErr = err.Error()
+		return err
+	}
+	m.meshGatewayRunning = false
+	m.meshGatewayStop = nil
+	return nil
+}
+
+func (m *Manager) StartSync(opts syncer.Options) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.syncRunning {
+		return errors.New("sync already running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	stop, err := syncer.Start(ctx, opts, func(msg string) {
+		log.Printf("[sync] %s", msg)
+	})
+	if err != nil {
+		m.syncErr = err.Error()
+		cancel()
+		return err
+	}
+	m.syncRunning = true
+	m.syncTarget = opts.Target
+	m.syncDir = opts.Dir
+	m.syncErr = ""
+	m.syncStop = func() error {
+		cancel()
+		return stop()
+	}
+	return nil
+}
+
+func (m *Manager) StopSync() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.syncRunning || m.syncStop == nil {
+		return errors.New("sync not running")
+	}
+	if err := m.syncStop(); err != nil {
+		m.syncErr = err.Error()
+		return err
+	}
+	m.syncRunning = false
+	m.syncStop = nil
+	return nil
+}
+
 func (m *Manager) StartTelegram(cfg config.TelegramConfig, cfgPath string, home string, identityPath string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -567,6 +664,14 @@ func (m *Manager) Status() Status {
 		ProxyConfig:      m.proxyConfig,
 		ProxyPID:         m.proxyPID,
 		ProxyError:       m.proxyErr,
+		MeshGatewayRunning: m.meshGatewayRunning,
+		MeshGatewayListen: m.meshGatewayListen,
+		MeshGatewayUpstream: m.meshGatewayUpstream,
+		MeshGatewayError:  m.meshGatewayErr,
+		SyncRunning:      m.syncRunning,
+		SyncTarget:       m.syncTarget,
+		SyncDir:          m.syncDir,
+		SyncError:        m.syncErr,
 		TelegramRunning:  m.telegramRunning,
 		TelegramError:    m.telegramErr,
 	}
@@ -605,6 +710,14 @@ type Status struct {
 	ProxyConfig      string
 	ProxyPID         int
 	ProxyError       string
+	MeshGatewayRunning bool
+	MeshGatewayListen  string
+	MeshGatewayUpstream string
+	MeshGatewayError   string
+	SyncRunning      bool
+	SyncTarget       string
+	SyncDir          string
+	SyncError        string
 	TelegramRunning  bool
 	TelegramError    string
 }

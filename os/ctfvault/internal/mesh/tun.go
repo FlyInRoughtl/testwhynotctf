@@ -222,8 +222,13 @@ func (c *tunCipher) open(ciphertext []byte) ([]byte, error) {
 	return c.aead.Open(nil, nonce, ciphertext, nil)
 }
 
-func nextNonce(b []byte, u uint64) any {
-	panic("unimplemented")
+func nextNonce(base []byte, counter uint64) []byte {
+	nonce := make([]byte, len(base))
+	copy(nonce, base)
+	for i := 0; i < 8 && i < len(nonce); i++ {
+		nonce[len(nonce)-1-i] ^= byte(counter >> (8 * i))
+	}
+	return nonce
 }
 
 func tunToConn(tunFile *os.File, conn net.Conn, cipher *tunCipher) error {
