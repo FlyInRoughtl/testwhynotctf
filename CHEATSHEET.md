@@ -1,4 +1,4 @@
-# Gargoyle CTF Cheatsheet (3.1.3r)
+# Gargoyle CTF Cheatsheet (3.1.3r_0.1.2)
 
 1) Запуск TUI  
 `gargoyle start --tui`

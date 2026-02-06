@@ -781,8 +781,16 @@ func runEmulate(logger *log.Logger, cfg config.Config, svc *services.Manager, ar
 	}
 	switch args[0] {
 	case "run":
-		if len(args) < 2 {
-			fmt.Println("emulate run: usage: emulate run <app> [args...]")
+		fs := flag.NewFlagSet("emulate run", flag.ContinueOnError)
+		fs.SetOutput(os.Stdout)
+		noPrivacy := fs.Bool("no-privacy", false, "disable privacy mode (use host profile)")
+		hostMode := fs.Bool("host", false, "alias for --no-privacy")
+		if err := fs.Parse(args[1:]); err != nil {
+			return 2
+		}
+		rest := fs.Args()
+		if len(rest) < 1 {
+			fmt.Println("emulate run: usage: emulate run [--no-privacy|--host] <app> [args...]")
 			return 2
 		}
 		home, _, err := system.EnsureHome(cfg)
@@ -790,12 +798,16 @@ func runEmulate(logger *log.Logger, cfg config.Config, svc *services.Manager, ar
 			logger.Printf("emulate: %v", err)
 			return 1
 		}
-		app := args[1]
+		app := rest[0]
 		appArgs := []string{}
-		if len(args) > 2 {
-			appArgs = args[2:]
+		if len(rest) > 1 {
+			appArgs = rest[1:]
 		}
-		if err := svc.StartEmulate(app, appArgs, cfg.Emulate, home); err != nil {
+		emulateCfg := cfg.Emulate
+		if *noPrivacy || *hostMode {
+			emulateCfg.PrivacyMode = false
+		}
+		if err := svc.StartEmulate(app, appArgs, emulateCfg, home); err != nil {
 			logger.Printf("emulate: %v", err)
 			return 1
 		}
@@ -1772,7 +1784,7 @@ func usage(app string) {
 	fmt.Println("  mesh discover|advertise|chat|clipboard|tun")
 	fmt.Println("  relay --listen :18080")
 	fmt.Println("  doh --listen 127.0.0.1:5353 --url https://.../dns-query")
-	fmt.Println("  emulate run|stop|status")
+	fmt.Println("  emulate run|stop|status [--no-privacy|--host]")
 	fmt.Println("  tunnel expose|stop|status")
 	fmt.Println("  tunnel wss-serve|wss-connect")
 	fmt.Println("  mail start|stop|status|send")

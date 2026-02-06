@@ -10,14 +10,14 @@
 - start | stop | status | init
 - mesh send|recv|chat|clipboard|discover|advertise|tun|gateway
 - relay | hub | tunnel | mail | proxy | hotspot
-- emulate run|stop|status (Linux)
+- emulate run|stop|status (Linux) [--no-privacy|--host]
 - tools list|install|edit
 - install pack-<name> [--repo URL]
 - doctor | update | telegram | profile | wipe
   update: --sha256 <sum> --sig <sig_b64> --pub <pub_b64>
 
 Tools packs
-Встроенные: ctf, ctf_emulate, anonymity, osint, empty
+Встроенные: ctf, ctf_emulate, anonymity, osint, empty, ctf-ultimate
 
 Конфиг/дом
 - По умолчанию: ~/.gargoyle (Linux) / %USERPROFILE%\.gargoyle (Windows)

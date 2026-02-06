@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipOptional = $false
+)
+
 $ErrorActionPreference = "Stop"
 
 $root = Resolve-Path (Join-Path $PSScriptRoot "..\\..")
@@ -22,6 +26,31 @@ if (-not (Has-Cmd "go")) {
     }
 } else {
     Write-Host "[deps] Go already installed."
+}
+
+if (Has-Cmd "winget") {
+    $packages = @(
+        @{ id = "WireGuard.WireGuard"; required = $true; note = "WireGuard VPN support" },
+        @{ id = "TorProject.TorBrowser"; required = $false; note = "Tor Browser (provides tor binaries)" },
+        @{ id = "IDRIX.VeraCrypt"; required = $false; note = "Encrypted containers on Windows" },
+        @{ id = "7zip.7zip"; required = $false; note = "Archive utility (optional)" }
+    )
+
+    foreach ($pkg in $packages) {
+        if ($SkipOptional -and -not $pkg.required) {
+            Write-Host "[deps] Skipping optional package $($pkg.id)."
+            continue
+        }
+
+        Write-Host "[deps] Installing $($pkg.id) - $($pkg.note)"
+        try {
+            winget install --id $pkg.id -e --accept-source-agreements --accept-package-agreements
+        } catch {
+            Write-Host "[deps] WARN: winget install failed for $($pkg.id): $_"
+        }
+    }
+} else {
+    Write-Host "[deps] winget not found. Skipping Windows package installs."
 }
 
 if (Test-Path $ctfDir) {

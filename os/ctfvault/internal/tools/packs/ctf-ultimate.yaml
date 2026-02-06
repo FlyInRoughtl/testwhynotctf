@@ -1,0 +1,72 @@
+pack: ctf-ultimate
+description: "Full CTF pack: Web, Pwn, Rev, Crypto, Forensics"
+tools:
+  # --- Web Security ---
+  - name: nikto
+    install: "apt:nikto"
+  - name: dirb
+    install: "apt:dirb"
+  - name: wpscan
+    install: "apt:wpscan"
+  - name: hydra
+    install: "apt:hydra"
+  - name: burpsuite
+    install: "apt:burpsuite"
+  - name: wapiti
+    install: "apt:wapiti"
+  - name: whatweb
+    install: "apt:whatweb"
+
+  # --- Pwn & Reversing ---
+  - name: gdb-peda
+    install: "apt:gdb-peda"
+  - name: ropper
+    install: "apt:ropper"
+  - name: ltrace
+    install: "apt:ltrace"
+  - name: strace
+    install: "apt:strace"
+  - name: checksec
+    install: "apt:checksec"
+  - name: radare2
+    install: "apt:radare2"
+  - name: ghidra
+    install: "apt:ghidra"
+
+  # --- Forensics & Stego ---
+  - name: binwalk
+    install: "apt:binwalk"
+  - name: exiftool
+    install: "apt:exiftool"
+  - name: steghide
+    install: "apt:steghide"
+  - name: stegseek
+    install: "apt:stegseek"
+  - name: foremost
+    install: "apt:foremost"
+  - name: zsteg
+    install: "apt:zsteg"
+  - name: strings
+    install: "apt:binutils"
+
+  # --- Crypto & Brute ---
+  - name: john
+    install: "apt:john"
+  - name: hashcat
+    install: "apt:hashcat"
+  - name: fcrackzip
+    install: "apt:fcrackzip"
+
+  # --- Network & Utils ---
+  - name: nmap
+    install: "apt:nmap"
+  - name: netcat
+    install: "apt:netcat"
+  - name: masscan
+    install: "apt:masscan"
+  - name: tshark
+    install: "apt:tshark"
+  - name: jq
+    install: "apt:jq"
+  - name: tmux
+    install: "apt:tmux"

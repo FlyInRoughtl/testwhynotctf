@@ -234,6 +234,73 @@ tools:
     install: "apt:bubblewrap"
 "@ | Set-Content -Path $path -Encoding ascii
         }
+        "ctf-ultimate" {
+            @"
+pack: ctf-ultimate
+description: "Full CTF pack: Web, Pwn, Rev, Crypto, Forensics"
+tools:
+  - name: nikto
+    install: "apt:nikto"
+  - name: dirb
+    install: "apt:dirb"
+  - name: wpscan
+    install: "apt:wpscan"
+  - name: hydra
+    install: "apt:hydra"
+  - name: burpsuite
+    install: "apt:burpsuite"
+  - name: wapiti
+    install: "apt:wapiti"
+  - name: whatweb
+    install: "apt:whatweb"
+  - name: gdb-peda
+    install: "apt:gdb-peda"
+  - name: ropper
+    install: "apt:ropper"
+  - name: ltrace
+    install: "apt:ltrace"
+  - name: strace
+    install: "apt:strace"
+  - name: checksec
+    install: "apt:checksec"
+  - name: radare2
+    install: "apt:radare2"
+  - name: ghidra
+    install: "apt:ghidra"
+  - name: binwalk
+    install: "apt:binwalk"
+  - name: exiftool
+    install: "apt:exiftool"
+  - name: steghide
+    install: "apt:steghide"
+  - name: stegseek
+    install: "apt:stegseek"
+  - name: foremost
+    install: "apt:foremost"
+  - name: zsteg
+    install: "apt:zsteg"
+  - name: strings
+    install: "apt:binutils"
+  - name: john
+    install: "apt:john"
+  - name: hashcat
+    install: "apt:hashcat"
+  - name: fcrackzip
+    install: "apt:fcrackzip"
+  - name: nmap
+    install: "apt:nmap"
+  - name: netcat
+    install: "apt:netcat"
+  - name: masscan
+    install: "apt:masscan"
+  - name: tshark
+    install: "apt:tshark"
+  - name: jq
+    install: "apt:jq"
+  - name: tmux
+    install: "apt:tmux"
+"@ | Set-Content -Path $path -Encoding ascii
+        }
         "osint" {
             @"
 pack: osint
@@ -261,7 +328,23 @@ tools: []
     }
 }
 
-function Write-Config($path, $edition, $opMode, $locale, $ramLimit, $cpuLimit, $dnsProfile, $dnsCustom, $wifi, $bt, $ports, $usbEnabled, $usbReadOnly, $ramOnly, $netMode, $vpnType, $vpnProfile, $gatewayIP, $proxyEngine, $proxyConfig, $torInstall, $torStrict, $torTransPort, $torDnsPort, $torUseBridges, $torTransport, $torBridgeLines, $torrcPath, $macSpoof, $meshOnion, $meshDiscovery, $meshDiscoveryPort, $meshDiscoveryKey, $meshAutoJoin, $meshChat, $meshChatListen, $meshChatPSK, $meshChatPSKFile, $meshClipboard, $meshClipboardWarn, $meshTunEnabled, $meshTunDevice, $meshTunCIDR, $meshTunPeerCIDR, $meshPadding, $meshTransport, $meshMetadata, $meshOnionDepth, $meshRelayAllowlist, $hotspotSSID, $hotspotPassword, $hotspotIfname, $hotspotShared, $emulatePrivacy, $emulateTemp, $emulateDownloads, $emulateDisplay, $tunnelType, $tunnelServer, $tunnelToken, $tunnelLocalIP, $mailMode, $mailSink, $mailLocal, $mailSinkListen, $mailSinkUI, $mailMeshEnabled, $mailMeshListen, $mailMeshPSK, $mailMeshPSKFile, $uiTheme, $uiBossKey, $uiBossMode, $toolsFile, $toolsAuto, $toolsRepo, $updateUrl, $updateChannel, $updatePublicKey, $updateAuto, $syncEnabled, $syncTarget, $syncDir, $syncPSK, $syncPSKFile, $syncTransport, $syncPadding, $syncDepth, $telegramEnabled, $telegramBotToken, $telegramAllowedUser, $telegramPairingTTL, $telegramAllowCLI, $telegramAllowWipe, $telegramAllowStats, $dohUrl, $dohListen) {
+function Write-Config {
+    param(
+        $path, $edition, $opMode, $locale, $ramLimit, $cpuLimit, $dnsProfile, $dnsCustom, $wifi, $bt, $ports,
+        $usbEnabled, $usbReadOnly, $ramOnly, $netMode, $vpnType, $vpnProfile, $gatewayIP, $proxyEngine, $proxyConfig,
+        $torInstall, $torStrict, $torTransPort, $torDnsPort, $torUseBridges, $torTransportName, $torBridgeLines, $torrcPath,
+        $macSpoof, $meshOnion, $meshDiscovery, $meshDiscoveryPort, $meshDiscoveryKey, $meshAutoJoin, $meshChat,
+        $meshChatListen, $meshChatPSK, $meshChatPSKFile, $meshClipboard, $meshClipboardWarn, $meshTunEnabled,
+        $meshTunDevice, $meshTunCIDR, $meshTunPeerCIDR, $meshPadding, $meshTransport, $meshMetadata, $meshOnionDepth,
+        $meshRelayAllowlist, $hotspotSSID, $hotspotPassword, $hotspotIfname, $hotspotShared, $emulatePrivacy,
+        $emulateTemp, $emulateDownloads, $emulateDisplay, $tunnelType, $tunnelServer, $tunnelToken, $tunnelLocalIP,
+        $mailMode, $mailSink, $mailLocal, $mailSinkListen, $mailSinkUI, $mailMeshEnabled, $mailMeshListen,
+        $mailMeshPSK, $mailMeshPSKFile, $uiTheme, $uiBossKey, $uiBossMode, $toolsFile, $toolsAuto, $toolsRepo,
+        $updateUrl, $updateChannel, $updatePublicKey, $updateAuto, $syncEnabled, $syncTarget, $syncDir, $syncPSK,
+        $syncPSKFile, $syncTransport, $syncPadding, $syncDepth, $telegramEnabled, $telegramBotToken,
+        $telegramAllowedUser, $telegramPairingTTL, $telegramAllowCLI, $telegramAllowWipe, $telegramAllowStats,
+        $dohUrl, $dohListen
+    )
     @"
 # Gargoyle config
 system:
@@ -297,7 +380,7 @@ network:
   tor_trans_port: $torTransPort
   tor_dns_port: $torDnsPort
   tor_use_bridges: $torUseBridges
-  tor_transport: "$torTransport"
+  tor_transport: "$torTransportName"
   tor_bridge_lines: $torBridgeLines
   torrc_path: "$torrcPath"
   mac_spoof: $macSpoof
@@ -757,7 +840,7 @@ if ($drive) {
         if ($enableBitLocker) {
             $bitlocker = Get-Command manage-bde -ErrorAction SilentlyContinue
             if ($bitlocker) {
-                Write-Host "Enabling BitLocker on $drive:`\" -ForegroundColor Yellow
+                Write-Host "Enabling BitLocker on ${drive}:\\" -ForegroundColor Yellow
                 try {
                     & manage-bde -on "$drive`:" -RecoveryPassword | Out-Host
                 } catch {

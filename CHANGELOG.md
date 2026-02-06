@@ -4,7 +4,7 @@ All notable changes to Gargoyle will be documented in this file.
 
 ## [Unreleased]
 
-## [3.1.3r] - 2026-02-06
+## [3.1.3r_0.1.2] - 2026-02-06
 ### Added
 - FullAnon profile (Tor always-on + kill-switch via iptables).
 - Hotspot/NAT helper (NetworkManager shared mode, Linux).

@@ -56,7 +56,7 @@ gargoyle update --url https://.../gargoyle --sha256 <sum> --sig <sig_b64> --pub 
 ```
 
 ## Tools packs
-Встроенные: `ctf`, `ctf_emulate`, `anonymity`, `osint`, `empty`.
+Встроенные: `ctf`, `ctf_emulate`, `ctf-ultimate`, `anonymity`, `osint`, `empty`.
 ```
 # установить встроенный pack
 
