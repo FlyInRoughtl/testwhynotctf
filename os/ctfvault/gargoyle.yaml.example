@@ -103,6 +103,21 @@ ui:
   language: "ru"
   boss_key: true
   boss_mode: "update" # update|htop|blank
+  quick_actions:
+    standard:
+      - label: "Status"
+        cmd: "gargoyle status"
+      - label: "Mesh status"
+        cmd: "gargoyle mesh status"
+      - label: "Doctor"
+        cmd: "gargoyle doctor"
+    fullanon:
+      - label: "Status"
+        cmd: "gargoyle status"
+      - label: "Warnings"
+        cmd: "gargoyle status"
+      - label: "Tor check"
+        cmd: "gargoyle doctor"
 
 tools:
   file: "tools.yaml"

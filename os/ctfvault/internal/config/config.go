@@ -44,30 +44,30 @@ type StorageConfig struct {
 }
 
 type NetworkConfig struct {
-	Proxy            string `yaml:"proxy"`
-	Mode             string `yaml:"mode"`
-	VPNType          string `yaml:"vpn_type"`
-	VPNProfile       string `yaml:"vpn_profile"`
-	GatewayIP        string `yaml:"gateway_ip"`
-	ProxyEngine      string `yaml:"proxy_engine"`
-	ProxyConfig      string `yaml:"proxy_config"`
-	DNSProfile       string `yaml:"dns_profile"`
-	DNSCustom        string `yaml:"dns_custom"`
-	DoHURL           string `yaml:"doh_url"`
-	DoHListen        string `yaml:"doh_listen"`
-	Tor              bool   `yaml:"tor"`
-	TorAlwaysOn      bool   `yaml:"tor_always_on"`
-	TorStrict        bool   `yaml:"tor_strict"`
-	TorTransPort     int    `yaml:"tor_trans_port"`
-	TorDNSPort       int    `yaml:"tor_dns_port"`
-	TorUseBridges    bool   `yaml:"tor_use_bridges"`
-	TorTransport     string `yaml:"tor_transport"`
+	Proxy            string   `yaml:"proxy"`
+	Mode             string   `yaml:"mode"`
+	VPNType          string   `yaml:"vpn_type"`
+	VPNProfile       string   `yaml:"vpn_profile"`
+	GatewayIP        string   `yaml:"gateway_ip"`
+	ProxyEngine      string   `yaml:"proxy_engine"`
+	ProxyConfig      string   `yaml:"proxy_config"`
+	DNSProfile       string   `yaml:"dns_profile"`
+	DNSCustom        string   `yaml:"dns_custom"`
+	DoHURL           string   `yaml:"doh_url"`
+	DoHListen        string   `yaml:"doh_listen"`
+	Tor              bool     `yaml:"tor"`
+	TorAlwaysOn      bool     `yaml:"tor_always_on"`
+	TorStrict        bool     `yaml:"tor_strict"`
+	TorTransPort     int      `yaml:"tor_trans_port"`
+	TorDNSPort       int      `yaml:"tor_dns_port"`
+	TorUseBridges    bool     `yaml:"tor_use_bridges"`
+	TorTransport     string   `yaml:"tor_transport"`
 	TorBridgeLines   []string `yaml:"tor_bridge_lines"`
-	TorrcPath        string `yaml:"torrc_path"`
-	MACSpoof         bool   `yaml:"mac_spoof"`
-	WifiEnabled      bool   `yaml:"wifi_enabled"`
-	BluetoothEnabled bool   `yaml:"bluetooth_enabled"`
-	PortsOpen        bool   `yaml:"ports_open"`
+	TorrcPath        string   `yaml:"torrc_path"`
+	MACSpoof         bool     `yaml:"mac_spoof"`
+	WifiEnabled      bool     `yaml:"wifi_enabled"`
+	BluetoothEnabled bool     `yaml:"bluetooth_enabled"`
+	PortsOpen        bool     `yaml:"ports_open"`
 }
 
 type SecurityConfig struct {
@@ -77,34 +77,34 @@ type SecurityConfig struct {
 }
 
 type MeshConfig struct {
-	RelayURL      string `yaml:"relay_url"`
-	OnionDepth    int    `yaml:"onion_depth"`
-	MetadataLevel string `yaml:"metadata_level"`
-	Transport     string `yaml:"transport"`
-	PaddingBytes  int    `yaml:"padding_bytes"`
-	DiscoveryEnabled bool   `yaml:"discovery_enabled"`
-	DiscoveryPort    int    `yaml:"discovery_port"`
-	DiscoveryKey     string `yaml:"discovery_key"`
-	AutoJoin         bool   `yaml:"auto_join"`
-	ChatEnabled      bool   `yaml:"chat_enabled"`
-	ChatListen       string `yaml:"chat_listen"`
-	ChatPSK          string `yaml:"chat_psk"`
-	ChatPSKFile      string `yaml:"chat_psk_file"`
-	ClipboardShare   bool   `yaml:"clipboard_share"`
-	ClipboardWarn    bool   `yaml:"clipboard_warn"`
-	TunEnabled       bool   `yaml:"tun_enabled"`
-	TunDevice        string `yaml:"tun_device"`
-	TunCIDR          string `yaml:"tun_cidr"`
-	TunPeerCIDR      string `yaml:"tun_peer_cidr"`
-	OnionOnly        bool   `yaml:"onion_only"`
-	RelayAllowlist   []string `yaml:"relay_allowlist"`
+	RelayURL         string        `yaml:"relay_url"`
+	OnionDepth       int           `yaml:"onion_depth"`
+	MetadataLevel    string        `yaml:"metadata_level"`
+	Transport        string        `yaml:"transport"`
+	PaddingBytes     int           `yaml:"padding_bytes"`
+	DiscoveryEnabled bool          `yaml:"discovery_enabled"`
+	DiscoveryPort    int           `yaml:"discovery_port"`
+	DiscoveryKey     string        `yaml:"discovery_key"`
+	AutoJoin         bool          `yaml:"auto_join"`
+	ChatEnabled      bool          `yaml:"chat_enabled"`
+	ChatListen       string        `yaml:"chat_listen"`
+	ChatPSK          string        `yaml:"chat_psk"`
+	ChatPSKFile      string        `yaml:"chat_psk_file"`
+	ClipboardShare   bool          `yaml:"clipboard_share"`
+	ClipboardWarn    bool          `yaml:"clipboard_warn"`
+	TunEnabled       bool          `yaml:"tun_enabled"`
+	TunDevice        string        `yaml:"tun_device"`
+	TunCIDR          string        `yaml:"tun_cidr"`
+	TunPeerCIDR      string        `yaml:"tun_peer_cidr"`
+	OnionOnly        bool          `yaml:"onion_only"`
+	RelayAllowlist   []string      `yaml:"relay_allowlist"`
 	Hotspot          HotspotConfig `yaml:"hotspot"`
 }
 
 type EmulateConfig struct {
-	PrivacyMode  bool   `yaml:"privacy_mode"`
-	TempDir      string `yaml:"temp_dir"`
-	DownloadsDir string `yaml:"downloads_dir"`
+	PrivacyMode   bool   `yaml:"privacy_mode"`
+	TempDir       string `yaml:"temp_dir"`
+	DownloadsDir  string `yaml:"downloads_dir"`
 	DisplayServer string `yaml:"display_server"`
 }
 
@@ -128,10 +128,11 @@ type MailConfig struct {
 }
 
 type UIConfig struct {
-	Theme    string `yaml:"theme"`
-	Language string `yaml:"language"`
-	BossKey  bool   `yaml:"boss_key"`
-	BossMode string `yaml:"boss_mode"`
+	Theme        string                   `yaml:"theme"`
+	Language     string                   `yaml:"language"`
+	BossKey      bool                     `yaml:"boss_key"`
+	BossMode     string                   `yaml:"boss_mode"`
+	QuickActions map[string][]QuickAction `yaml:"quick_actions"`
 }
 
 type ToolsConfig struct {
@@ -166,24 +167,29 @@ type SyncConfig struct {
 }
 
 type TelegramConfig struct {
-	Enabled        bool   `yaml:"enabled"`
-	BotToken       string `yaml:"bot_token"`
-	AllowedUserID  int64  `yaml:"allowed_user_id"`
-	PairingTTL     int    `yaml:"pairing_ttl"`
-	AllowCLI       bool   `yaml:"allow_cli"`
-	AllowWipe      bool   `yaml:"allow_wipe"`
-	AllowStats     bool   `yaml:"allow_stats"`
+	Enabled       bool   `yaml:"enabled"`
+	BotToken      string `yaml:"bot_token"`
+	AllowedUserID int64  `yaml:"allowed_user_id"`
+	PairingTTL    int    `yaml:"pairing_ttl"`
+	AllowCLI      bool   `yaml:"allow_cli"`
+	AllowWipe     bool   `yaml:"allow_wipe"`
+	AllowStats    bool   `yaml:"allow_stats"`
+}
+
+type QuickAction struct {
+	Label string `yaml:"label"`
+	Cmd   string `yaml:"cmd"`
 }
 
 func DefaultConfig() Config {
 	return Config{
-	System: SystemConfig{
-		RamLimitMB: 2048,
-		CPULimit:   2,
-		Locale:     "ru",
-		Edition:    "public",
-		Mode:       "standard",
-	},
+		System: SystemConfig{
+			RamLimitMB: 2048,
+			CPULimit:   2,
+			Locale:     "ru",
+			Edition:    "public",
+			Mode:       "standard",
+		},
 		Storage: StorageConfig{
 			Persistent:        true,
 			Shared:            false,
@@ -225,39 +231,39 @@ func DefaultConfig() Config {
 			IdentityLength:  256,
 			IdentityGroup:   15,
 		},
-	Mesh: MeshConfig{
-		RelayURL:      "",
-		OnionDepth:    3,
-		MetadataLevel: "standard",
-		Transport:     "tls",
-		PaddingBytes:  256,
-		DiscoveryEnabled: false,
-		DiscoveryPort:    19998,
-		DiscoveryKey:     "",
-		AutoJoin:         false,
-		ChatEnabled:      true,
-		ChatListen:       ":19997",
-		ChatPSK:          "",
-		ChatPSKFile:      "",
-		ClipboardShare:   false,
-		ClipboardWarn:    true,
-		TunEnabled:       false,
-		TunDevice:        "gargoyle0",
-		TunCIDR:          "10.42.0.1/24",
-		TunPeerCIDR:      "10.42.0.0/24",
-		OnionOnly:        false,
-		RelayAllowlist:   nil,
-		Hotspot: HotspotConfig{
-			SSID:     "",
-			Password: "",
-			Ifname:   "",
-			Shared:   true,
+		Mesh: MeshConfig{
+			RelayURL:         "",
+			OnionDepth:       3,
+			MetadataLevel:    "standard",
+			Transport:        "tls",
+			PaddingBytes:     256,
+			DiscoveryEnabled: false,
+			DiscoveryPort:    19998,
+			DiscoveryKey:     "",
+			AutoJoin:         false,
+			ChatEnabled:      true,
+			ChatListen:       ":19997",
+			ChatPSK:          "",
+			ChatPSKFile:      "",
+			ClipboardShare:   false,
+			ClipboardWarn:    true,
+			TunEnabled:       false,
+			TunDevice:        "gargoyle0",
+			TunCIDR:          "10.42.0.1/24",
+			TunPeerCIDR:      "10.42.0.0/24",
+			OnionOnly:        false,
+			RelayAllowlist:   nil,
+			Hotspot: HotspotConfig{
+				SSID:     "",
+				Password: "",
+				Ifname:   "",
+				Shared:   true,
+			},
 		},
-	},
 		Emulate: EmulateConfig{
-			PrivacyMode:  true,
-			TempDir:      "ram",
-			DownloadsDir: "downloads",
+			PrivacyMode:   true,
+			TempDir:       "ram",
+			DownloadsDir:  "downloads",
 			DisplayServer: "direct",
 		},
 		Tunnel: TunnelConfig{
@@ -282,38 +288,65 @@ func DefaultConfig() Config {
 			Language: "ru",
 			BossKey:  true,
 			BossMode: "update",
+			QuickActions: map[string][]QuickAction{
+				"standard": {
+					{Label: "Status", Cmd: "gargoyle status"},
+					{Label: "Mesh status", Cmd: "gargoyle mesh status"},
+					{Label: "Doctor", Cmd: "gargoyle doctor"},
+				},
+				"fullanon": {
+					{Label: "Status", Cmd: "gargoyle status"},
+					{Label: "Warnings", Cmd: "gargoyle status"},
+					{Label: "Tor check", Cmd: "gargoyle doctor"},
+				},
+			},
 		},
 		Tools: ToolsConfig{
 			File:        "tools.yaml",
 			AutoInstall: false,
 			Repository:  "",
 		},
-	Update: UpdateConfig{
-		URL:       "",
-		Channel:   "stable",
-		PublicKey: "",
-		Auto:      false,
-	},
-	Sync: SyncConfig{
-		Enabled:      false,
-		Target:       "",
-		Dir:          "./loot",
-		PSK:          "",
-		PSKFile:      "",
-		Transport:    "tls",
-		PaddingBytes: 256,
-		Depth:        3,
-	},
-	Telegram: TelegramConfig{
-		Enabled:       false,
-		BotToken:      "",
-		AllowedUserID: 0,
-		PairingTTL:    60,
-		AllowCLI:      false,
-		AllowWipe:     false,
-		AllowStats:    true,
-	},
+		Update: UpdateConfig{
+			URL:       "",
+			Channel:   "stable",
+			PublicKey: "",
+			Auto:      false,
+		},
+		Sync: SyncConfig{
+			Enabled:      false,
+			Target:       "",
+			Dir:          "./loot",
+			PSK:          "",
+			PSKFile:      "",
+			Transport:    "tls",
+			PaddingBytes: 256,
+			Depth:        3,
+		},
+		Telegram: TelegramConfig{
+			Enabled:       false,
+			BotToken:      "",
+			AllowedUserID: 0,
+			PairingTTL:    60,
+			AllowCLI:      false,
+			AllowWipe:     false,
+			AllowStats:    true,
+		},
+	}
 }
+
+func (cfg Config) QuickActionsFor(mode string) []QuickAction {
+	if cfg.UI.QuickActions == nil {
+		return nil
+	}
+	if mode != "" {
+		if list, ok := cfg.UI.QuickActions[mode]; ok && len(list) > 0 {
+			return list
+		}
+	}
+	if list, ok := cfg.UI.QuickActions["default"]; ok && len(list) > 0 {
+		return list
+	}
+	return nil
 }
 
 func Load(path string) (Config, error) {
@@ -491,6 +524,17 @@ func validate(cfg Config) error {
 		case "update", "htop", "blank":
 		default:
 			return errors.New("ui.boss_mode must be update|htop|blank")
+		}
+	}
+	for profile, actions := range cfg.UI.QuickActions {
+		_ = profile
+		for _, action := range actions {
+			if strings.TrimSpace(action.Label) == "" {
+				return errors.New("ui.quick_actions label is empty")
+			}
+			if strings.TrimSpace(action.Cmd) == "" {
+				return errors.New("ui.quick_actions cmd is empty")
+			}
 		}
 	}
 	if cfg.Telegram.PairingTTL < 0 || cfg.Telegram.PairingTTL > 3600 {

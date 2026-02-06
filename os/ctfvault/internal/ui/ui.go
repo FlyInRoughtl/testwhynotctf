@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -22,12 +23,17 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
+	"github.com/shirou/gopsutil/v3/mem"
+	gnet "github.com/shirou/gopsutil/v3/net"
 )
 
 type view int
 
 const (
 	viewHome view = iota
+	viewActions
 	viewNetwork
 	viewStorage
 	viewEmulate
@@ -40,6 +46,7 @@ const (
 	viewBroadcast
 	viewWarnings
 	viewStatus
+	viewTerminal
 	viewSystem
 )
 
@@ -88,6 +95,13 @@ type model struct {
 	torStrictActive bool
 	torStrictErr    string
 	pendingQuit     bool
+	inMenu          bool
+	metrics         metricsSnapshot
+	lastNetRx       uint64
+	lastNetTx       uint64
+	lastMetricsAt   time.Time
+	actions         []config.QuickAction
+	actionsCursor   int
 }
 
 type netScanMsg struct {
@@ -128,23 +142,48 @@ type torCheckMsg struct {
 	Err    error
 }
 
+type shellDoneMsg struct {
+	Err error
+}
+
+type metricsSnapshot struct {
+	CPUPercent  float64
+	MemUsed     uint64
+	MemTotal    uint64
+	MemPercent  float64
+	DiskUsed    uint64
+	DiskTotal   uint64
+	DiskPercent float64
+	NetRxBytes  uint64
+	NetTxBytes  uint64
+	NetRxRate   float64
+	NetTxRate   float64
+}
+
+type metricsMsg struct {
+	Stats metricsSnapshot
+	Err   error
+}
+
 func initialModel(cfg config.Config, home string, identity string, svc *services.Manager, usbEvents <-chan system.USBEvent) model {
 	return model{
 		cfg:           cfg,
 		home:          home,
 		identity:      identity,
-		menu:          []string{"Home", "Network", "Storage", "Emulate", "Hub", "Tools", "Mesh", "Hotspot", "Gateway", "Sync", "Broadcast", "Warnings", "Status", "System"},
+		menu:          []string{"Home", "Actions", "Network", "Storage", "Emulate", "Hub", "Tools", "Mesh", "Hotspot", "Gateway", "Sync", "Broadcast", "Warnings", "Status", "Terminal", "System"},
 		view:          viewHome,
 		netStatus:     "scan pending",
 		usbStatus:     usbStatusDefault(cfg),
 		hotspotStatus: "unknown",
 		services:      svc,
 		usbEvents:     usbEvents,
+		inMenu:        true,
+		actions:       cfg.QuickActionsFor(cfg.System.Mode),
 	}
 }
 
 func (m model) Init() tea.Cmd {
-	cmds := []tea.Cmd{tickCmd(), scanNetworksCmd(), statusCmd(m.services)}
+	cmds := []tea.Cmd{tickCmd(), scanNetworksCmd(), statusCmd(m.services), metricsCmd(m.home)}
 	if m.cfg.Storage.USBEnabled {
 		cmds = append(cmds, scanUSBsCmd())
 	}
@@ -176,8 +215,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case tickMsg:
 		m.tick++
+		cmds := []tea.Cmd{tickCmd(), statusCmd(m.services)}
+		if m.tick%7 == 0 {
+			cmds = append(cmds, metricsCmd(m.home))
+		}
 		if m.tick%20 == 0 {
-			cmds := []tea.Cmd{tickCmd(), scanNetworksCmd(), statusCmd(m.services)}
+			cmds = append(cmds, scanNetworksCmd())
 			if m.cfg.Storage.USBEnabled {
 				cmds = append(cmds, scanUSBsCmd())
 			}
@@ -187,9 +230,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cfg.Network.TorStrict {
 				cmds = append(cmds, torCheckCmd())
 			}
-			return m, tea.Batch(cmds...)
 		}
-		return m, tea.Batch(tickCmd(), statusCmd(m.services))
+		return m, tea.Batch(cmds...)
 	case netScanMsg:
 		if msg.Err != nil {
 			m.netStatus = msg.Err.Error()
@@ -257,6 +299,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.torStrictErr = ""
 			m.torStrictActive = msg.Active
+		}
+	case metricsMsg:
+		if msg.Err != nil {
+			m.lastErr = msg.Err.Error()
+			break
+		}
+		now := time.Now()
+		if !m.lastMetricsAt.IsZero() {
+			dt := now.Sub(m.lastMetricsAt).Seconds()
+			if dt > 0 {
+				m.metrics.NetRxRate = float64(msg.Stats.NetRxBytes-m.lastNetRx) / dt
+				m.metrics.NetTxRate = float64(msg.Stats.NetTxBytes-m.lastNetTx) / dt
+			}
+		}
+		m.lastNetRx = msg.Stats.NetRxBytes
+		m.lastNetTx = msg.Stats.NetTxBytes
+		m.lastMetricsAt = now
+		msg.Stats.NetRxRate = m.metrics.NetRxRate
+		msg.Stats.NetTxRate = m.metrics.NetTxRate
+		m.metrics = msg.Stats
+	case shellDoneMsg:
+		if msg.Err != nil {
+			m.lastErr = fmt.Sprintf("shell: %v", msg.Err)
+		} else {
+			m.lastErr = ""
+			m.lastMsg = "shell closed"
 		}
 	case tea.KeyMsg:
 		if m.cfg.UI.BossKey && msg.String() == "f10" {
@@ -449,32 +517,55 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		switch msg.String() {
-		case "ctrl+c", "q", "esc":
+		case "ctrl+c", "q":
 			if m.cfg.Storage.AutoWipeOnExit {
 				m.pendingQuit = true
 				m.lastMsg = "exit: auto wipe"
 				return m, wipeCmd(m.home, m.cfg.Security.IdentityKeyPath)
 			}
 			return m, tea.Quit
+		case "enter", "right":
+			if m.inMenu {
+				m.inMenu = false
+				m.view = view(m.cursor)
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				if m.view == viewActions {
+					if len(m.actions) == 0 {
+						m.lastErr = "no quick actions configured"
+						m.lastMsg = ""
+						break
+					}
+					if m.actionsCursor < 0 || m.actionsCursor >= len(m.actions) {
+						m.lastErr = "invalid action selection"
+						m.lastMsg = ""
+						break
+					}
+					return m, openActionTerminalCmd(m.actions[m.actionsCursor], m.home)
+				}
+				return m, openSectionTerminalCmd(m.view, m.home)
+			}
+		case "left", "esc":
+			if !m.inMenu {
+				m.inMenu = true
+				return m, nil
+			}
+		case "c":
+			return m, shellCmd(m.home)
 		case "up", "k":
-			if m.cursor > 0 {
+			if m.inMenu && m.cursor > 0 {
 				m.cursor--
 				m.view = view(m.cursor)
+			} else if !m.inMenu && m.view == viewActions && m.actionsCursor > 0 {
+				m.actionsCursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.menu)-1 {
+			if m.inMenu && m.cursor < len(m.menu)-1 {
 				m.cursor++
 				m.view = view(m.cursor)
-			}
-		case "left", "h":
-			if m.cursor > 0 {
-				m.cursor--
-				m.view = view(m.cursor)
-			}
-		case "right", "l":
-			if m.cursor < len(m.menu)-1 {
-				m.cursor++
-				m.view = view(m.cursor)
+			} else if !m.inMenu && m.view == viewActions && m.actionsCursor < len(m.actions)-1 {
+				m.actionsCursor++
 			}
 		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 			key := msg.String()
@@ -579,13 +670,21 @@ func headerView(m model) string {
 func sidebarView(m model) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2)
 	var b strings.Builder
-	b.WriteString("Menu\n\n")
+	if m.inMenu {
+		b.WriteString("Menu (focus)\n\n")
+	} else {
+		b.WriteString("Menu (left/esc to return)\n\n")
+	}
 	for i, item := range m.menu {
 		cursor := " "
 		style := lipgloss.NewStyle()
 		if i == m.cursor {
 			cursor = ">"
-			style = style.Bold(true).Foreground(lipgloss.Color("229"))
+			if m.inMenu {
+				style = style.Bold(true).Foreground(lipgloss.Color("229"))
+			} else {
+				style = style.Foreground(lipgloss.Color("245"))
+			}
 		}
 		b.WriteString(fmt.Sprintf("%s %s\n", cursor, style.Render(item)))
 	}
@@ -604,6 +703,8 @@ func mainView(m model) string {
 	switch m.view {
 	case viewHome:
 		return box.Render(homeView(m))
+	case viewActions:
+		return box.Render(actionsView(m))
 	case viewNetwork:
 		return box.Render(networkView(m))
 	case viewStorage:
@@ -628,6 +729,8 @@ func mainView(m model) string {
 		return box.Render(warningsView(m))
 	case viewStatus:
 		return box.Render(statusView(m))
+	case viewTerminal:
+		return box.Render(terminalView(m))
 	case viewSystem:
 		return box.Render(systemView(m))
 	default:
@@ -636,7 +739,7 @@ func mainView(m model) string {
 }
 
 func footerView(m model) string {
-	hint := "Arrows: navigate | 1-9: jump | r: relay | d: doh | h: hotspot | g: gateway | y: sync | b: broadcast | ?: help | f10: boss | q/esc: quit"
+	hint := "Up/Down: menu | Enter/Right: open | Left/Esc: back | r: relay | d: doh | h: hotspot | g: gateway | y: sync | b: broadcast | c: shell | ?: help | f10: boss | q: quit"
 	return lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(hint)
 }
 
@@ -668,14 +771,18 @@ func bossView(m model) string {
 }
 
 func homeView(m model) string {
-	cpu := bar(m.tick%100, 100, 20)
-	ram := bar((m.tick*3)%100, 100, 20)
-	disk := bar((m.tick*7)%100, 100, 20)
-	net := bar((m.tick*5)%100, 100, 20)
+	cpu := bar(int(m.metrics.CPUPercent), 100, 20)
+	ram := bar(int(m.metrics.MemPercent), 100, 20)
+	disk := bar(int(m.metrics.DiskPercent), 100, 20)
+	netRate := fmt.Sprintf("RX %.0f KB/s | TX %.0f KB/s", m.metrics.NetRxRate/1024, m.metrics.NetTxRate/1024)
 	ctfLabel, ctfHints := ctfSafeSummary(m.cfg)
 	hintText := "-"
 	if len(ctfHints) > 0 {
 		hintText = strings.Join(ctfHints, "; ")
+	}
+	actionsInfo := "none"
+	if len(m.actions) > 0 {
+		actionsInfo = fmt.Sprintf("%d configured", len(m.actions))
 	}
 
 	banner := lipgloss.NewStyle().
@@ -683,9 +790,13 @@ func homeView(m model) string {
 		Render(gargoyleBanner)
 
 	return fmt.Sprintf(
-		"%s\n\nDashboard\n\nCPU  [%s]\nRAM  [%s]\nDisk [%s]\nNet  [%s]\n\nCTF-safe: %s\nHints: %s",
+		"%s\n\nDashboard\n\nCPU  [%s] %.1f%%\nRAM  [%s] %s / %s\nDisk [%s] %s / %s\nNet  %s\n\nQuick actions: %s\nCTF-safe: %s\nHints: %s",
 		banner,
-		cpu, ram, disk, net,
+		cpu, m.metrics.CPUPercent,
+		ram, fmtBytes(m.metrics.MemUsed), fmtBytes(m.metrics.MemTotal),
+		disk, fmtBytes(m.metrics.DiskUsed), fmtBytes(m.metrics.DiskTotal),
+		netRate,
+		actionsInfo,
 		ctfLabel, hintText,
 	)
 }
@@ -917,6 +1028,30 @@ func statusView(m model) string {
 	)
 }
 
+func actionsView(m model) string {
+	if len(m.actions) == 0 {
+		return "Quick Actions\n\nNo actions configured for this profile.\nEdit gargoyle.yaml -> ui.quick_actions."
+	}
+	var b strings.Builder
+	b.WriteString("Quick Actions\n\n")
+	for i, action := range m.actions {
+		cursor := " "
+		if i == m.actionsCursor {
+			cursor = ">"
+		}
+		b.WriteString(fmt.Sprintf("%s %s\n    %s\n", cursor, action.Label, action.Cmd))
+	}
+	b.WriteString("\nEnter: run in new terminal")
+	return b.String()
+}
+
+func terminalView(m model) string {
+	return fmt.Sprintf(
+		"Terminal\n\nPress Enter to open a new terminal window.\nThe terminal inherits GARGOYLE_HOME:\n%s\n\nExamples:\n- gargoyle status\n- gargoyle mesh status\n- gargoyle doctor\n",
+		emptyIf(m.home),
+	)
+}
+
 func systemView(m model) string {
 	return fmt.Sprintf(
 		"System\n\nEdition: %s\nLocale: %s\nMode: %s\nIdentity: %s\n\nPrivacy: MAC spoof %s, Tor %s, Strict %s\nEmulate privacy: %s",
@@ -935,12 +1070,15 @@ func helpView(m model) string {
 	box := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 2).Width(max(60, m.width-10))
 	text := "Help\n\n" +
 		"Navigation:\n" +
-		"- Arrows / hjkl: move menu\n" +
+		"- Up/Down: move menu\n" +
+		"- Enter/Right: open view\n" +
+		"- Left/Esc: back to menu\n" +
 		"- 1-9: jump to section\n" +
 		"- ?: toggle help\n\n" +
 		"Global hotkeys:\n" +
 		"- r: relay start/stop\n" +
 		"- d: DoH start/stop\n" +
+		"- c: open shell (exit to return)\n" +
 		"- x: emergency wipe (double-press)\n" +
 		"- f10: boss key\n\n" +
 		"Screens:\n" +
@@ -949,6 +1087,7 @@ func helpView(m model) string {
 		"- Gateway: g start/stop\n" +
 		"- Sync: y start/stop\n" +
 		"- Broadcast: b compose, a alert toggle\n\n" +
+		"- Actions: Enter runs selected quick action\n\n" +
 		"CLI help: gargoyle help / gargoyle help-gargoyle"
 	return box.Render(text)
 }
@@ -1073,9 +1212,219 @@ func Run(cfg config.Config, home string, identity string, svc *services.Manager)
 	if stop != nil {
 		defer stop()
 	}
+	if home != "" {
+		_ = os.Setenv(paths.EnvHome, home)
+	}
 	p := tea.NewProgram(initialModel(cfg, home, identity, svc, usbEvents))
 	_, err := p.Run()
 	return err
+}
+
+func shellCmd(home string) tea.Cmd {
+	shell := ""
+	var args []string
+	switch runtime.GOOS {
+	case "windows":
+		shell = "cmd.exe"
+		args = []string{}
+	default:
+		shell = "bash"
+		args = []string{"-l"}
+	}
+	cmd := exec.Command(shell, args...)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("%s=%s", paths.EnvHome, home))
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return shellDoneMsg{Err: err}
+	})
+}
+
+func metricsCmd(home string) tea.Cmd {
+	return func() tea.Msg {
+		if home == "" {
+			home = "."
+		}
+		cpuPct, err := cpu.Percent(0, false)
+		if err != nil || len(cpuPct) == 0 {
+			return metricsMsg{Err: fmt.Errorf("cpu: %v", err)}
+		}
+		memStat, err := mem.VirtualMemory()
+		if err != nil {
+			return metricsMsg{Err: fmt.Errorf("mem: %v", err)}
+		}
+		diskStat, err := disk.Usage(home)
+		if err != nil {
+			return metricsMsg{Err: fmt.Errorf("disk: %v", err)}
+		}
+		netStat, err := gnet.IOCounters(false)
+		if err != nil {
+			return metricsMsg{Err: fmt.Errorf("net: %v", err)}
+		}
+		var rx, tx uint64
+		for _, n := range netStat {
+			rx += n.BytesRecv
+			tx += n.BytesSent
+		}
+		snap := metricsSnapshot{
+			CPUPercent:  cpuPct[0],
+			MemUsed:     memStat.Used,
+			MemTotal:    memStat.Total,
+			MemPercent:  memStat.UsedPercent,
+			DiskUsed:    diskStat.Used,
+			DiskTotal:   diskStat.Total,
+			DiskPercent: diskStat.UsedPercent,
+			NetRxBytes:  rx,
+			NetTxBytes:  tx,
+		}
+		return metricsMsg{Stats: snap}
+	}
+}
+
+func openSectionTerminalCmd(v view, home string) tea.Cmd {
+	if v == viewTerminal {
+		return openShellTerminalCmd()
+	}
+	cmdline := sectionCommand(v, home)
+	if cmdline == "" {
+		return func() tea.Msg { return shellDoneMsg{Err: errors.New("no command for this view")} }
+	}
+	return openCmdInTerminal(cmdline)
+}
+
+func openActionTerminalCmd(action config.QuickAction, home string) tea.Cmd {
+	cmdline := strings.TrimSpace(action.Cmd)
+	if cmdline == "" {
+		return func() tea.Msg { return shellDoneMsg{Err: errors.New("action cmd is empty")} }
+	}
+	if home != "" {
+		if runtime.GOOS == "windows" {
+			cmdline = fmt.Sprintf("set %s=%s && %s", paths.EnvHome, home, cmdline)
+		} else {
+			cmdline = fmt.Sprintf("%s=%q %s", paths.EnvHome, home, cmdline)
+		}
+	}
+	return openCmdInTerminal(cmdline)
+}
+
+func openShellTerminalCmd() tea.Cmd {
+	if runtime.GOOS == "windows" {
+		return tea.ExecProcess(exec.Command("cmd.exe", "/c", "start", "Gargoyle Shell", "cmd", "/k"), func(err error) tea.Msg {
+			return shellDoneMsg{Err: err}
+		})
+	}
+	candidates := []struct {
+		bin  string
+		args []string
+	}{
+		{"x-terminal-emulator", []string{"-e", "bash", "-l"}},
+		{"gnome-terminal", []string{"--", "bash", "-l"}},
+		{"konsole", []string{"-e", "bash", "-l"}},
+		{"xfce4-terminal", []string{"-e", "bash", "-l"}},
+		{"xterm", []string{"-e", "bash", "-l"}},
+	}
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c.bin); err == nil {
+			return tea.ExecProcess(exec.Command(c.bin, c.args...), func(err error) tea.Msg {
+				return shellDoneMsg{Err: err}
+			})
+		}
+	}
+	return func() tea.Msg { return shellDoneMsg{Err: errors.New("no terminal emulator found")} }
+}
+
+func openCmdInTerminal(cmdline string) tea.Cmd {
+	if runtime.GOOS == "windows" {
+		return tea.ExecProcess(exec.Command("cmd.exe", "/c", "start", "Gargoyle", "cmd", "/k", cmdline), func(err error) tea.Msg {
+			return shellDoneMsg{Err: err}
+		})
+	}
+	term, args, err := pickTerminal(cmdline)
+	if err != nil {
+		return func() tea.Msg { return shellDoneMsg{Err: err} }
+	}
+	return tea.ExecProcess(exec.Command(term, args...), func(err error) tea.Msg {
+		return shellDoneMsg{Err: err}
+	})
+}
+
+func sectionCommand(v view, home string) string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	homeArg := fmt.Sprintf("--home %q", home)
+	base := fmt.Sprintf("%q %s", exe, homeArg)
+	switch v {
+	case viewHome:
+		return base + " status"
+	case viewActions:
+		return ""
+	case viewNetwork:
+		return base + " doctor"
+	case viewStorage:
+		return base + " status"
+	case viewEmulate:
+		return base + " emulate status"
+	case viewHub:
+		return base + " hub status"
+	case viewTools:
+		return base + " tools list"
+	case viewMesh:
+		return base + " mesh status"
+	case viewHotspot:
+		return base + " hotspot status"
+	case viewSync:
+		return base + " sync status"
+	case viewWarnings:
+		return base + " status"
+	case viewStatus:
+		return base + " status"
+	case viewTerminal:
+		return ""
+	case viewSystem:
+		return base + " version"
+	default:
+		return ""
+	}
+}
+
+func pickTerminal(cmdline string) (string, []string, error) {
+	candidates := []struct {
+		bin  string
+		args []string
+	}{
+		{"x-terminal-emulator", []string{"-e", cmdline}},
+		{"gnome-terminal", []string{"--", "bash", "-lc", cmdline}},
+		{"konsole", []string{"-e", "bash", "-lc", cmdline}},
+		{"xfce4-terminal", []string{"--command", "bash -lc " + cmdline}},
+		{"xterm", []string{"-e", cmdline}},
+	}
+	for _, c := range candidates {
+		if _, err := exec.LookPath(c.bin); err == nil {
+			return c.bin, c.args, nil
+		}
+	}
+	return "", nil, errors.New("no terminal emulator found")
+}
+
+func fmtBytes(v uint64) string {
+	const (
+		KB = 1024
+		MB = 1024 * KB
+		GB = 1024 * MB
+	)
+	switch {
+	case v >= GB:
+		return fmt.Sprintf("%.1f GB", float64(v)/GB)
+	case v >= MB:
+		return fmt.Sprintf("%.1f MB", float64(v)/MB)
+	case v >= KB:
+		return fmt.Sprintf("%.1f KB", float64(v)/KB)
+	default:
+		return fmt.Sprintf("%d B", v)
+	}
 }
 
 func scanNetworksCmd() tea.Cmd {
