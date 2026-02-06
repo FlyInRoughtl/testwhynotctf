@@ -385,7 +385,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 export GARGOYLE_HOME="$ROOT"
 if [ -x "$ROOT/gargoyle" ]; then
-  exec "$ROOT/gargoyle" start --tui --home "$ROOT"
+  exec "$ROOT/gargoyle" --home "$ROOT" start --tui
 fi
 echo "gargoyle binary not found in $ROOT"
 echo "Build it with ./build.sh (requires Go)."

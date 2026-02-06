@@ -43,6 +43,7 @@ func Run(app string, args []string) int {
 	runTUI := fs.Bool("tui", false, "launch TUI shell")
 	applyNetwork := fs.Bool("apply-network", false, "apply network profile (Linux only)")
 
+	args = reorderGlobalFlags(args)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -176,6 +177,37 @@ func Run(app string, args []string) int {
 		usage(app)
 		return 2
 	}
+}
+
+func reorderGlobalFlags(args []string) []string {
+	if len(args) == 0 {
+		return args
+	}
+	flags := make([]string, 0, len(args))
+	rest := make([]string, 0, len(args))
+	i := 0
+	for i < len(args) {
+		a := args[i]
+		switch {
+		case a == "--config" || a == "--home":
+			if i+1 < len(args) {
+				flags = append(flags, a, args[i+1])
+				i += 2
+				continue
+			}
+		case strings.HasPrefix(a, "--config=") || strings.HasPrefix(a, "--home="):
+			flags = append(flags, a)
+			i++
+			continue
+		case a == "--tui" || a == "--apply-network":
+			flags = append(flags, a)
+			i++
+			continue
+		}
+		rest = append(rest, a)
+		i++
+	}
+	return append(flags, rest...)
 }
 
 func runMesh(logger *log.Logger, cfg config.Config, svc *services.Manager, args []string) int {

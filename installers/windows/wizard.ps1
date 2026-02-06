@@ -247,7 +247,7 @@ function Write-StartCmd($destRoot) {
 set GARGOYLE_HOME=%~dp0
 cd /d %~dp0
 if exist gargoyle.exe (
-  gargoyle.exe start --tui --home %~dp0
+  gargoyle.exe --home %~dp0 start --tui
 ) else (
   echo gargoyle.exe not found in this folder.
   echo Build it from the repo or copy gargoyle.exe here.
