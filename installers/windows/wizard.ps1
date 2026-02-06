@@ -1,4 +1,7 @@
 # Gargoyle Installer Wizard (Windows, TUI)
+param(
+    [switch]$Quick
+)
 $ErrorActionPreference = "Stop"
 
 $logPath = Join-Path (Get-Location) "installer.log"
@@ -47,6 +50,10 @@ function Ask-Advanced($question) {
     $ans = Read-Host "$question (press A for Advanced, Enter to continue)"
     if ($ans -match '^[Aa]$') { return $true }
     return $false
+}
+
+function Has-Cmd($name) {
+    return (Get-Command $name -ErrorAction SilentlyContinue) -ne $null
 }
 
 function Find-VeraCrypt() {
@@ -612,38 +619,89 @@ telegram:
 "@ | Set-Content -Path $path -Encoding ascii
 }
 
-Write-Host "Gargoyle Installer Wizard (Windows)" -ForegroundColor Green
-Write-Host "Note: Full USB layout (ext4 + LUKS2) is only available on Linux."
-
-$target = Ask-Choice "Install target" @("Folder (recommended on Windows)", "USB (exFAT only, shared)")
-
-$edition = Ask-Choice "Edition" @("public", "private")
-$opMode = Ask-Choice "Operation mode" @("standard", "fullanon")
-$locale = Ask-Choice "Language" @("ru", "en")
-$ramLimit = 2048
-$cpuLimit = 2
-$dnsProfile = Ask-Choice "DNS profile" @("system", "xbox", "custom")
-$dnsCustom = ""
-if ($dnsProfile -eq "custom") {
-    $dnsCustom = Read-Host "Enter DNS-over-HTTPS URL or resolver"
+function Write-PostInstallSummary($homeRoot) {
+    Write-Host ""
+    Write-Host "===== INSTALL COMPLETE =====" -ForegroundColor Green
+    Write-Host "Home: $homeRoot"
+    if (Test-Path (Join-Path $homeRoot "gargoyle.exe")) {
+        Write-Host "Binary: gargoyle.exe (OK)"
+    } else {
+        Write-Host "Binary: gargoyle.exe NOT FOUND" -ForegroundColor Yellow
+        Write-Host "Run build.cmd inside this folder (requires Go) or re-run wizard with Go installed." -ForegroundColor Yellow
+    }
+    if (Test-Path (Join-Path $homeRoot "start.cmd")) {
+        Write-Host "Start: start.cmd"
+    }
+    if (Test-Path (Join-Path $homeRoot "build.cmd")) {
+        Write-Host "Build: build.cmd"
+    }
+    Write-Host "==========================="
+    Write-Host ""
 }
-if ($dnsProfile -eq "xbox") {
-    $dnsCustom = "https://xbox-dns.ru/dns-query"
-}
 
-$wifi = Ask-YesNo "Enable Wi-Fi by default?" $true
-$bt = Ask-YesNo "Enable Bluetooth by default?" $false
-$ports = Ask-YesNo "Open ports by default?" $false
-$installScripts = Ask-YesNo "Install Gargoyle Script (DSL) samples?" $true
-$usbEnabled = Ask-YesNo "Enable USB access inside Gargoyle?" $false
-$usbReadOnly = $false
-if ($usbEnabled) {
-    $usbReadOnly = Ask-YesNo "USB read-only mode?" $true
-}
-$ramOnly = Ask-YesNo "RAM-only session (no disk writes)?" $false
-$autoWipeRemove = Ask-YesNo "Auto wipe on USB removal?" ($opMode -eq "fullanon")
-$autoWipeExit = Ask-YesNo "Auto wipe on exit?" ($opMode -eq "fullanon")
-$genRecovery = Ask-YesNo "Generate recovery codes file (USB only recommended)?" ($target -like "USB*")
+try {
+    Write-Host "Gargoyle Installer Wizard (Windows)" -ForegroundColor Green
+    Write-Host "Note: Full USB layout (ext4 + LUKS2) is only available on Linux."
+
+    if ($Quick) {
+        Write-Host "[quick] Running dependency installer (best-effort)..." -ForegroundColor Yellow
+        try {
+            & "$PSScriptRoot\\deps.ps1" | Out-Host
+        } catch {
+            Write-Host "[quick] deps failed: $_" -ForegroundColor Yellow
+        }
+    }
+
+    if ($Quick) {
+        $target = "USB (exFAT only, shared)"
+        $edition = "public"
+        $opMode = "standard"
+        $locale = "ru"
+        $ramLimit = 2048
+        $cpuLimit = 2
+        $dnsProfile = "system"
+        $dnsCustom = ""
+        $wifi = $true
+        $bt = $false
+        $ports = $false
+        $installScripts = $true
+        $usbEnabled = $false
+        $usbReadOnly = $false
+        $ramOnly = $false
+        $autoWipeRemove = $false
+        $autoWipeExit = $false
+        $genRecovery = $true
+    } else {
+        $target = Ask-Choice "Install target" @("Folder (recommended on Windows)", "USB (exFAT only, shared)")
+
+        $edition = Ask-Choice "Edition" @("public", "private")
+        $opMode = Ask-Choice "Operation mode" @("standard", "fullanon")
+        $locale = Ask-Choice "Language" @("ru", "en")
+        $ramLimit = 2048
+        $cpuLimit = 2
+        $dnsProfile = Ask-Choice "DNS profile" @("system", "xbox", "custom")
+        $dnsCustom = ""
+        if ($dnsProfile -eq "custom") {
+            $dnsCustom = Read-Host "Enter DNS-over-HTTPS URL or resolver"
+        }
+        if ($dnsProfile -eq "xbox") {
+            $dnsCustom = "https://xbox-dns.ru/dns-query"
+        }
+
+        $wifi = Ask-YesNo "Enable Wi-Fi by default?" $true
+        $bt = Ask-YesNo "Enable Bluetooth by default?" $false
+        $ports = Ask-YesNo "Open ports by default?" $false
+        $installScripts = Ask-YesNo "Install Gargoyle Script (DSL) samples?" $true
+        $usbEnabled = Ask-YesNo "Enable USB access inside Gargoyle?" $false
+        $usbReadOnly = $false
+        if ($usbEnabled) {
+            $usbReadOnly = Ask-YesNo "USB read-only mode?" $true
+        }
+        $ramOnly = Ask-YesNo "RAM-only session (no disk writes)?" $false
+        $autoWipeRemove = Ask-YesNo "Auto wipe on USB removal?" ($opMode -eq "fullanon")
+        $autoWipeExit = Ask-YesNo "Auto wipe on exit?" ($opMode -eq "fullanon")
+        $genRecovery = Ask-YesNo "Generate recovery codes file (USB only recommended)?" ($target -like "USB*")
+    }
 
 $netMode = ""
 $vpnType = ""
@@ -738,6 +796,12 @@ if ($opMode -eq "fullanon") {
     $meshDiscovery = $false
     $meshChat = $false
     $meshClipboard = $false
+} elseif ($Quick) {
+    $netMode = "direct"
+    $torInstall = $true
+    $torStrict = $false
+    $toolsFile = "tools\\packs\\ctf.yaml"
+    $toolsAuto = $false
 } else {
     $netMode = Ask-Choice "Network mode" @("direct", "vpn", "gateway", "proxy")
     if ($netMode -eq "vpn") {
@@ -761,7 +825,11 @@ if ($opMode -eq "fullanon") {
     }
 }
 
-$advanced = Ask-Advanced "Advanced privacy/mesh settings?"
+if (-not $Quick) {
+    $advanced = Ask-Advanced "Advanced privacy/mesh settings?"
+} else {
+    $advanced = $false
+}
 if ($advanced) {
     $ramLimit = Read-Host "RAM limit MB (default $ramLimit)"
     if (-not $ramLimit) { $ramLimit = 2048 }
@@ -889,7 +957,7 @@ if ($advanced) {
     $telegramAllowStats = Ask-YesNo "Telegram allow stats?" $telegramAllowStats
 }
 
-if ($target -like "Folder*") {
+    if ($target -like "Folder*") {
     $folder = Read-Host "Enter install folder path"
     if (-not $folder) { throw "Folder path is required" }
     Show-Plan "Folder" $folder "" "" "" "" "" $edition $opMode $dnsProfile $torStrict $usbEnabled $usbReadOnly $ramOnly $toolsFile ""
@@ -925,8 +993,10 @@ if ($target -like "Folder*") {
         Write-SampleScript (Join-Path $scriptsDir "sample.gsl")
     }
     Write-Host "Folder install complete: $homeRoot" -ForegroundColor Green
+    Write-PostInstallSummary $homeRoot
+    Read-Host "Press Enter to exit"
     exit 0
-}
+    }
 
 # USB (exFAT only on Windows)
 $disks = Get-Disk | Where-Object BusType -eq 'USB'
@@ -1016,6 +1086,13 @@ if ($drive) {
             }
         }
     }
+    Write-Host "USB formatted as exFAT shared. Full ext4/LUKS layout requires Linux wizard." -ForegroundColor Yellow
+    Write-PostInstallSummary $homeRoot
+    Read-Host "Press Enter to exit"
 }
-
-Write-Host "USB formatted as exFAT shared. Full ext4/LUKS layout requires Linux wizard." -ForegroundColor Yellow
+} catch {
+    Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "See installer.log in $(Get-Location)" -ForegroundColor Yellow
+    Read-Host "Press Enter to exit"
+    exit 1
+}

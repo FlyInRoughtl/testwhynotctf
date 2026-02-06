@@ -15,6 +15,7 @@ Gargoyle — переносимая изолированная среда для
 - Linux: `bash installers/linux/bootstrap.sh`
 - Wizard (USB/Folder):
   - Windows: `installers/windows/wizard.cmd`
+  - Windows quick (USB, defaults): `installers/windows/quick.cmd`
   - Linux: `bash installers/linux/wizard.sh`
   - Нажмите `A` на шаге базовых настроек для Advanced профиля
   - Dry‑run + лог: `installer.log`
